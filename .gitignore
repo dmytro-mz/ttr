@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local secrets
+.env
+.env.*
+
+# Scratch output
+results/
+logs/
+shots/
+
+# Photos of the printed board and cards (Days of Wonder artwork); keep your own copy locally
+scripts/assets/*.jpg
+scripts/assets/*.jpeg
+scripts/assets/*.png

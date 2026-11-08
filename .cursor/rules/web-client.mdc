@@ -1,0 +1,33 @@
+---
+description: Web server, room protocol and the vanilla JS board client
+globs: src/ttr/web/**,tests/test_web.py,scripts/demo.py,scripts/ui_check.py
+alwaysApply: false
+---
+
+# Web
+
+## Server / room
+
+- `Room` is synchronous table logic with no I/O; `server.py` only moves JSON over WebSockets.
+- Every change is broadcast as a full per-viewer snapshot (`Room.state_for`). Hidden information —
+  other hands, other tickets and offers, blind-drawn cards — must never reach another client until
+  the game is over (`_filter_event`, `_my_state`). `tests/test_web.py` checks this; keep it passing.
+- Bots, timeouts and autopilot run from `Room.plan()` → `(delay, step)`, driven by `Room.drive()`.
+- Players are identified by a random token in localStorage; `/r/CODE?me=TOKEN` moves a player to another
+  device (that's how `scripts/demo.py` opens a seeded table).
+
+## Client (`static/`, no build step, no frameworks)
+
+- `dom.js` `h()` / `s()` build HTML / SVG and skip `null` children — but native `replaceChildren` /
+  `append` do NOT (they print "null"): filter first.
+- `board.js` draws the map: score track frame, the printed map art (painted once into one canvas
+  bitmap — no tiled patterns, they show seams), routes as car rectangles along each route's traced
+  `path` (offset by `side` for doubles), cities, labels, trains (raised pieces; the spaces underneath
+  are hidden), stations, score markers.
+- Pan/zoom/pinch only change a CSS transform while the gesture runs; the viewBox is committed after
+  a short idle. Keep SVG filters, image patterns and infinite animations off the board — every
+  re-raster pays for them and the map flashes.
+- `cards.js` train cards, ticket cards (mini map uses `<use href="#land-sym">`), colour chips.
+- `app.js` home, lobby, game layout (board · market · dock · side panel), popovers and dialogs.
+- Avoid generic class names that collide with layout classes (`.game`, `.board`, `.panel`...).
+- After UI changes: `uv run python scripts/demo.py ...` and look at the PNG; then `scripts/ui_check.py`.

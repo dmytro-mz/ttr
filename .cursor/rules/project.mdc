@@ -1,0 +1,44 @@
+---
+description: Ticket to Ride Europe project map, layering and day-to-day commands
+alwaysApply: true
+---
+
+# Ticket to Ride: Europe — project map
+
+Goal: an online Ticket to Ride: Europe for friends — complete official rules, a board that looks and feels
+like the real one, and bots good enough to fill empty seats.
+
+## Layout and dependency direction (never import "upwards")
+
+```
+ttr/game/          rules engine, pure Python, no I/O                  (lowest layer)
+  model.py         City / Route / Ticket / MapData, card constants, route points
+  europe.py        the Europe map: cities (measured on the board photo), routes, tickets
+  rules.py         pure helpers: payments, tunnels, doubles, stations, longest path
+  actions.py       action dataclasses + JSON protocol
+  engine.py        Game state machine: Game.step(seat, action) -> events, Game.view(seat)
+ttr/bots/          Bot ABC + planner (Rookie / Conductor / Expert) + registry
+ttr/runner.py      play_game(bots, seed)
+ttr/web/           room.py (sync table logic, no I/O) · server.py (FastAPI + WebSocket)
+                   static/ (vanilla ES-module client, no build step)
+ttr/cli.py         typer CLI (entry point `ttr`)
+scripts/           map tracing from the board photo (assets/): find_cities, fit_routes -> europe_paths.py,
+                   trace_land -> land.json, build_land (borders), overlay/crop/city_sheet (checks)
+                   demo/ui_check/shot/board_shot (visual + browser checks)
+```
+
+## Commands (always via uv, never pip)
+
+- Tests: `uv run pytest` (must pass before you say you're done)
+- Lint/format: `uv run ruff check --fix src tests scripts && uv run ruff format src tests scripts`
+- Play: `uv run ttr serve` (LAN) · `uv run ttr serve --tunnel` (public link via cloudflared)
+- Bot strength: `uv run ttr eval -a expert,conductor -n 400`
+- See the UI: `uv run python scripts/demo.py --stage play|tickets|over|lobby --out shots/x.png`
+- Click through a whole game in Chrome: `uv run python scripts/ui_check.py` (fails on any JS error)
+
+## Working agreements
+
+- The server is authoritative; clients only send intents. Never trust client input.
+- Any rules change goes in `game/` with a test in `tests/test_engine.py` or `tests/test_rules.py`.
+- UI changes: render with `scripts/demo.py`, look at the screenshot, run `scripts/ui_check.py`.
+- `shots/` is scratch output (gitignored).
