@@ -14,24 +14,37 @@ const SERIF = '"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua",
 
 const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
 
-function cubicPoint(p0, p1, p2, p3, t) {
-  const u = 1 - t;
-  const a = u * u * u;
-  const b = 3 * u * u * t;
-  const c = 3 * u * t * t;
-  const d = t * t * t;
-  return { x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y };
+// A route is a polyline: city a -> waypoints -> city b. Double tracks are the same polyline pushed
+// sideways (mitred at the bends).
+function offsetLine(pts, off) {
+  if (!off) return pts;
+  const dirs = [];
+  for (let i = 1; i < pts.length; i++) {
+    const d = dist(pts[i - 1], pts[i]) || 1;
+    dirs.push({ x: (pts[i].x - pts[i - 1].x) / d, y: (pts[i].y - pts[i - 1].y) / d });
+  }
+  return pts.map((p, i) => {
+    const d0 = dirs[Math.max(0, i - 1)];
+    const d1 = dirs[Math.min(dirs.length - 1, i)];
+    // normals are (-dy, dx); the mitre is their sum scaled so the offset stays `off` from both segments
+    let nx = -d0.y - d1.y;
+    let ny = d0.x + d1.x;
+    const k = nx * -d0.y + ny * d0.x;
+    if (Math.abs(k) < 0.3) {
+      nx = -d0.y;
+      ny = d0.x;
+    } else {
+      nx /= k;
+      ny /= k;
+    }
+    return { x: p.x + nx * off, y: p.y + ny * off };
+  });
 }
 
-function sampleCurve(p0, p1, p2, p3, n = 96) {
-  const pts = [p0];
+function sampleLine(pts) {
   const len = [0];
-  for (let i = 1; i <= n; i++) {
-    const p = cubicPoint(p0, p1, p2, p3, i / n);
-    len.push(len[i - 1] + dist(pts[i - 1], p));
-    pts.push(p);
-  }
-  return { pts, len, total: len[n] };
+  for (let i = 1; i < pts.length; i++) len.push(len[i - 1] + dist(pts[i - 1], pts[i]));
+  return { pts, len, total: len[len.length - 1] };
 }
 
 function at(curve, sLen) {
@@ -41,41 +54,71 @@ function at(curve, sLen) {
   const t = (sLen - len[i - 1]) / Math.max(1e-6, len[i] - len[i - 1]);
   const p0 = pts[i - 1];
   const p1 = pts[i];
-  const dx = p1.x - p0.x;
-  const dy = p1.y - p0.y;
-  const d = Math.hypot(dx, dy) || 1;
-  return { x: p0.x + dx * t, y: p0.y + dy * t, tx: dx / d, ty: dy / d };
+  return { x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t };
 }
 
-// Car centres/angles for every route, along the curve traced from the printed board.
+// Cars along a polyline. Each straight piece gets whole cars (the bends fall in the gaps, like the printed
+// board); if the pieces can't take them evenly, cars are strung along the line and a car on a bend lies
+// along its chord.
+function placeCars(curve, L) {
+  const { len, total } = curve;
+  const a0 = CITY_R;
+  const avail = total - 2 * CITY_R;
+  const carLen = (avail - (L - 1) * GAP) / L;
+  const slot = carLen + GAP;
+  const deg = (p, q) => (Math.atan2(q.y - p.y, q.x - p.x) * 180) / Math.PI;
+  const segs = [];
+  for (let i = 1; i < len.length; i++) {
+    const s0 = Math.max(len[i - 1], a0);
+    const s1 = Math.min(len[i], total - CITY_R);
+    if (s1 - s0 > 1e-6) segs.push([s0, s1]);
+  }
+  const want = segs.map(([s0, s1]) => (s1 - s0 + GAP) / slot);
+  const n = want.map(Math.floor);
+  let rest = L - n.reduce((a, b) => a + b, 0);
+  want
+    .map((w, i) => [w - n[i], i])
+    .sort((x, y) => y[0] - x[0])
+    .forEach(([, i]) => {
+      if (rest-- > 0) n[i]++;
+    });
+  const cars = [];
+  if (rest <= 0 && segs.every(([s0, s1], i) => n[i] * slot - GAP <= s1 - s0 + 2.5)) {
+    segs.forEach(([s0, s1], i) => {
+      const start = s0 + (s1 - s0 - (n[i] * slot - GAP)) / 2;
+      for (let k = 0; k < n[i]; k++) {
+        const p = at(curve, start + k * slot);
+        const q = at(curve, start + k * slot + carLen);
+        cars.push({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, angle: deg(p, q) });
+      }
+    });
+    return { cars, carLen };
+  }
+  for (let i = 0; i < L; i++) {
+    const p = at(curve, a0 + i * slot);
+    const q = at(curve, a0 + i * slot + carLen);
+    cars.push({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, angle: deg(p, q) });
+  }
+  return { cars, carLen };
+}
+
+// Car centres/angles for every route, along the polyline traced from the printed board.
 export function layoutRoutes(map) {
   const city = Object.fromEntries(map.cities.map((c) => [c.name, c]));
-  const curves = new Map();
   const out = {};
   for (const r of map.routes) {
-    const key = [r.a, r.b].sort().join("|");
-    if (!curves.has(key)) {
-      const A = city[r.a];
-      const B = city[r.b];
-      const [x1, y1, x2, y2] = r.path;
-      curves.set(key, sampleCurve(A, { x: x1, y: y1 }, { x: x2, y: y2 }, B));
-    }
-    const curve = curves.get(key);
-    const off = r.side * TRACK_OFF;
-    const L = r.length;
-    const avail = curve.total - 2 * CITY_R;
-    const carLen = (avail - (L - 1) * GAP) / L;
-    const cars = [];
-    for (let i = 0; i < L; i++) {
-      const p = at(curve, CITY_R + i * (carLen + GAP) + carLen / 2);
-      cars.push({ x: p.x - p.ty * off, y: p.y + p.tx * off, angle: (Math.atan2(p.ty, p.tx) * 180) / Math.PI });
-    }
-    const line = [];
-    for (let i = 0; i <= 24; i++) {
-      const p = at(curve, CITY_R + (avail * i) / 24);
-      line.push(`${(p.x - p.ty * off).toFixed(1)},${(p.y + p.tx * off).toFixed(1)}`);
-    }
-    out[r.id] = { cars, carLen, path: `M${line.join("L")}`, mid: cars[Math.floor(L / 2)] };
+    const mid = r.path.map(([x, y]) => ({ x, y }));
+    const curve = sampleLine(offsetLine([city[r.a], ...mid, city[r.b]], r.side * TRACK_OFF));
+    const { cars, carLen } = placeCars(curve, r.length);
+    const line = [at(curve, CITY_R)];
+    for (let i = 1; i < curve.pts.length - 1; i++) if (curve.len[i] > CITY_R && curve.len[i] < curve.total - CITY_R) line.push(curve.pts[i]);
+    line.push(at(curve, curve.total - CITY_R));
+    out[r.id] = {
+      cars,
+      carLen,
+      path: `M${line.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join("L")}`,
+      mid: cars[Math.floor(r.length / 2)],
+    };
   }
   return out;
 }

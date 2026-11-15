@@ -115,7 +115,7 @@ leaks, card conservation) are in [`.cursor/rules/`](.cursor/rules/).
 ### Map data
 
 The map geometry (city positions, route curves, coastline) was traced from a photo of the printed board with
-`scripts/find_cities.py`, `scripts/fit_routes.py` and `scripts/trace_land.py`. The results are committed
+`scripts/find_cities.py` and `scripts/trace_land.py`. The results are committed
 (`src/ttr/game/europe.py`, `src/ttr/game/europe_paths.py`, `src/ttr/web/static/land.json`), so you only need
 these scripts to re-trace the map. The board photo is not included in this repository. To re-trace, put your
 own photo at `scripts/assets/board_photo.jpg`. Country borders come from

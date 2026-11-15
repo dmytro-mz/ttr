@@ -239,9 +239,7 @@ def _build() -> MapData:
     routes: list[Route] = []
     for a, b, length, color, kind, locos in _ROUTES:
         twin = next((r.id for r in routes if {r.a, r.b} == {a, b}), None)
-        ctrl, sides = PATHS[(a, b)]
-        x1, y1 = _board(ctrl[0], ctrl[1])
-        x2, y2 = _board(ctrl[2], ctrl[3])
+        way, sides = PATHS[(a, b)]
         routes.append(
             Route(
                 id=len(routes),
@@ -252,7 +250,7 @@ def _build() -> MapData:
                 tunnel=kind == "tunnel",
                 ferry=locos if kind == "ferry" else 0,
                 twin=twin,
-                path=(x1, y1, x2, y2),
+                path=tuple(_board(x, y) for x, y in way),
                 side=sides[0 if twin is None else 1],
             )
         )

@@ -97,41 +97,47 @@ def test_cities_lie_on_the_board() -> None:
         assert c.label in {"n", "s", "e", "w", "ne", "nw", "se", "sw"}
 
 
-def test_every_route_follows_a_traced_curve() -> None:
+def test_every_route_has_a_polyline() -> None:
     for r in EUROPE.routes:
-        assert r.path is not None and len(r.path) == 4, r
-        assert all(-20 < x < EUROPE.width + 20 for x in r.path[::2]), r
-        assert all(-20 < y < EUROPE.height + 20 for y in r.path[1::2]), r
+        assert r.path is not None and len(r.path) <= 4, r
+        assert all(-20 < x < EUROPE.width + 20 and -20 < y < EUROPE.height + 20 for x, y in r.path), r
         double = r.twin is not None or any(t.twin == r.id for t in EUROPE.routes)
         assert r.side in ((-1, 1) if double else (0,)), r
 
 
 def _car_centres(r) -> list[tuple[float, float]]:
-    """Same layout as board.js: cars spread along the cubic, offset sideways for doubles."""
+    """Same layout as board.js: cars spread along the polyline, offset sideways for doubles."""
     city = {c.name: c for c in EUROPE.cities}
-    a, b = city[r.a], city[r.b]
-    x1, y1, x2, y2 = r.path
-    pts = []
-    for i in range(201):
-        t = i / 200
-        u = 1 - t
-        pts.append(
-            (
-                u**3 * a.x + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t**3 * b.x,
-                u**3 * a.y + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t**3 * b.y,
-            )
-        )
+    pts = [(city[r.a].x, city[r.a].y), *r.path, (city[r.b].x, city[r.b].y)]
+    off = r.side * 5.1
+    if off:
+        dirs = []
+        for p, q in itertools.pairwise(pts):
+            d = math.dist(p, q) or 1
+            dirs.append(((q[0] - p[0]) / d, (q[1] - p[1]) / d))
+        shifted = []
+        for i, p in enumerate(pts):
+            d0, d1 = dirs[max(0, i - 1)], dirs[min(len(dirs) - 1, i)]
+            nx, ny = -d0[1] - d1[1], d0[0] + d1[0]
+            k = nx * -d0[1] + ny * d0[0]
+            nx, ny = (-d0[1], d0[0]) if abs(k) < 0.3 else (nx / k, ny / k)
+            shifted.append((p[0] + nx * off, p[1] + ny * off))
+        pts = shifted
     s = [0.0]
     for p, q in itertools.pairwise(pts):
         s.append(s[-1] + math.dist(p, q))
-    car = (s[-1] - 2 * 10.5 - (r.length - 1) * 2.6) / r.length
+    slot = (s[-1] - 2 * 10.5 - (r.length - 1) * 2.6) / r.length + 2.6
+
+    def at(d: float) -> tuple[float, float]:
+        j = next((i for i, v in enumerate(s) if v >= d and i > 0), len(s) - 1)
+        t = (d - s[j - 1]) / max(1e-6, s[j] - s[j - 1])
+        return (pts[j - 1][0] + (pts[j][0] - pts[j - 1][0]) * t, pts[j - 1][1] + (pts[j][1] - pts[j - 1][1]) * t)
+
+    # Close enough to board.js (which keeps bends in the gaps between cars): cars strung along the line.
     out = []
     for k in range(r.length):
-        d = 10.5 + k * (car + 2.6) + car / 2
-        j = next(i for i, v in enumerate(s) if v >= d)
-        (px, py), (qx, qy) = pts[j - 1], pts[j]
-        n = math.hypot(qx - px, qy - py) or 1
-        out.append((qx - (qy - py) / n * r.side * 5.1, qy + (qx - px) / n * r.side * 5.1))
+        p, q = at(10.5 + k * slot), at(10.5 + k * slot + slot - 2.6)
+        out.append(((p[0] + q[0]) / 2, (p[1] + q[1]) / 2))
     return out
 
 

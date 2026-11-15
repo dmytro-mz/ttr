@@ -22,7 +22,7 @@ ttr/runner.py      play_game(bots, seed)
 ttr/web/           room.py (sync table logic, no I/O) · server.py (FastAPI + WebSocket)
                    static/ (vanilla ES-module client, no build step)
 ttr/cli.py         typer CLI (entry point `ttr`)
-scripts/           map tracing from the board photo (assets/): find_cities, fit_routes -> europe_paths.py,
+scripts/           map tracing from the board photo (assets/): find_cities,
                    trace_land -> land.json, build_land (borders), overlay/crop/city_sheet (checks)
                    demo/ui_check/shot/board_shot (visual + browser checks)
 ```

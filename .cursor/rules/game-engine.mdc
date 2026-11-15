@@ -38,9 +38,10 @@ Everything is traced from the board photo `scripts/assets/board_photo.jpg`; neve
 
 - City positions in `europe.py` are photo pixels (template-matched with `scripts/find_cities.py`),
   mapped by `_board()`; `label` (n/s/e/w/ne/nw/se/sw) is where the name sits on the photo.
-- Route shapes are cubic curves fitted to the printed cars by `scripts/fit_routes.py`, which
-  generates `europe_paths.py` (`Route.path` control points, `Route.side` track of a double).
-  After moving a city or adding a route: `uv run python scripts/fit_routes.py [--only A-B]`.
+- Route shapes are hand-kept polylines in `europe_paths.py` (`Route.path` = bend points between the two
+  cities, `Route.side` = track of a double): a few straight pieces with clean bends like the printed board, no
+  wobble, no two routes running side by side. After moving a city or adding a route, edit them there and check
+  with `uv run python scripts/board_shot.py out.png --view x,y,width`.
 - Coastlines: `scripts/trace_land.py` segments land/sea from the photo into `land.json`
-  (`build_land.py` only supplies the Natural Earth borders). Re-run it after re-fitting routes.
+  (`build_land.py` only supplies the Natural Earth borders).
 - Check with `scripts/overlay.py OUT.png --routes --land --tiles` and `scripts/board_shot.py`.

@@ -33,9 +33,9 @@ class Route(NamedTuple):
     tunnel: bool
     ferry: int  # locomotives required (0 = not a ferry)
     twin: int | None  # the other track of a double route
-    # Shape as printed: cubic Bézier control points (x1, y1, x2, y2) from city a to city b, and for double
+    # Shape as printed: the bend points between city a and city b (straight segments), and for double
     # routes the side of the centre line this track lies on (+1 / -1).
-    path: tuple[float, float, float, float] | None = None
+    path: tuple[tuple[float, float], ...] | None = None
     side: int = 0
 
     @property
