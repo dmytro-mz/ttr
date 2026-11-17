@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from ttr.game.europe import EUROPE
+from ttr.game.maps import DEFAULT_MAP, MAPS
 from ttr.web.room import Room, RoomError, bots_public
 
 log = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ class RoomManager:
 
 def create_app(public_url: str | None = None, lan_url: str | None = None, delay_scale: float = 1.0) -> FastAPI:
     manager = RoomManager(delay_scale=delay_scale)
-    board = EUROPE.to_json()
+    boards = {key: info.board.to_json() for key, info in MAPS.items()}
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -133,11 +133,20 @@ def create_app(public_url: str | None = None, lan_url: str | None = None, delay_
 
     @app.get("/api/config")
     async def config() -> dict[str, Any]:
-        return {"public_url": public_url, "lan_url": lan_url, "bots": bots_public()}
+        return {
+            "public_url": public_url,
+            "lan_url": lan_url,
+            "bots": bots_public(),
+            "maps": [info.public() for info in MAPS.values()],
+            "default_map": DEFAULT_MAP,
+        }
 
     @app.get("/api/map")
-    async def board_json() -> dict[str, Any]:
-        return board
+    @app.get("/api/map/{key}")
+    async def board_json(key: str = DEFAULT_MAP) -> dict[str, Any]:
+        if key not in boards:
+            raise HTTPException(404, "No such map")
+        return boards[key]
 
     @app.post("/api/rooms")
     async def create_room() -> dict[str, str]:

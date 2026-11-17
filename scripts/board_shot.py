@@ -1,6 +1,6 @@
 """Render only the board (no game UI) at high resolution, optionally cropped by CSS zoom.
 
-uv run python scripts/board_shot.py OUT.png [--claimed] [--width 2400]
+uv run python scripts/board_shot.py OUT.png [--map uk] [--view x,y,width] [--size 2000x1300]
 """
 
 from __future__ import annotations
@@ -24,8 +24,10 @@ PAGE = """<!doctype html><html><head><link rel="stylesheet" href="/static/style.
 import { Board } from "/static/board.js";
 import { s } from "/static/dom.js";
 const get = (url) => fetch(url).then((r) => r.json());
-const [map, land] = await Promise.all([get("/api/map"), get("/static/land.json")]);
-const sym = s("symbol", {id: "land-sym", viewBox: "0 0 1000 650"}, s("path", {d: land.land}));
+const key = new URLSearchParams(location.search).get("map") || "europe";
+const landUrl = key === "europe" ? "/static/land.json" : `/static/land-${key}.json`;
+const [map, land] = await Promise.all([get(`/api/map/${key}`), get(landUrl)]);
+const sym = s("symbol", {id: "land-sym", viewBox: `0 0 ${map.width} ${map.height}`}, s("path", {d: land.land}));
 document.body.append(s("svg", {width: 0, height: 0}, s("defs", {}, sym)));
 const b = new Board(map, land);
 document.getElementById("app").append(b.el);
@@ -43,6 +45,7 @@ def main() -> None:
     ap.add_argument("out")
     ap.add_argument("--view", default="", help="x,y,width of the board area to show")
     ap.add_argument("--size", default="2000x1300")
+    ap.add_argument("--map", default="europe", help="europe | uk")
     args = ap.parse_args()
     app = create_app()
     app.add_api_route("/board", lambda: HTMLResponse(PAGE))
@@ -51,7 +54,7 @@ def main() -> None:
     while not server.started:
         time.sleep(0.05)
     w, h = args.size.split("x")
-    url = f"http://127.0.0.1:8766/board?view={args.view}"
+    url = f"http://127.0.0.1:8766/board?view={args.view}&map={args.map}"
     subprocess.run([sys.executable, str(Path(__file__).with_name("shot.py")), url, args.out, w, h], check=True)
 
 

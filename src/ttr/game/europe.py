@@ -260,7 +260,13 @@ def _build() -> MapData:
     tickets = [Ticket(id=i, a=a, b=b, value=v, long=True) for i, (a, b, v) in enumerate(_LONG_TICKETS)]
     tickets += [Ticket(id=len(tickets) + i, a=a, b=b, value=v, long=False) for i, (a, b, v) in enumerate(_TICKETS)]
     return MapData(
-        name="Europe", width=WIDTH, height=HEIGHT, cities=tuple(cities), routes=tuple(routes), tickets=tuple(tickets)
+        key="europe",
+        name="Europe",
+        width=WIDTH,
+        height=HEIGHT,
+        cities=tuple(cities),
+        routes=tuple(routes),
+        tickets=tuple(tickets),
     )
 
 

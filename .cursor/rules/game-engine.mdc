@@ -45,3 +45,10 @@ Everything is traced from the board photo `scripts/assets/board_photo.jpg`; neve
 - Coastlines: `scripts/trace_land.py` segments land/sea from the photo into `land.json`
   (`build_land.py` only supplies the Natural Earth borders).
 - Check with `scripts/overlay.py OUT.png --routes --land --tiles` and `scripts/board_shot.py`.
+
+## UK map (`uk.py`, `uk_data.py`, `uk_paths.py`, `techs.py`)
+
+- `maps.py` lists the maps and their `RulesConfig` (`uk_rules()`): 35 trains, no stations/Express, 5 tickets keep 3,
+  `technologies`, `swap_rate` (4 cards = a locomotive, 3 with the Booster). Routes need `MapData.tech_needs`.
+- City positions/route shapes come from the 600x900 board scan: `scripts/build_uk_paths.py` (shapes, from
+  `assets/uk_cars.json`) and `scripts/build_land_uk.py` (coast, from Natural Earth). `France` is one city with two sites.

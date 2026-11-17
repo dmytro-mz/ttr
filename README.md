@@ -11,6 +11,9 @@ fill empty seats.
 - **Complete official rules**: tunnels, ferries, stations, double routes, long and short destination tickets,
   the final round, and the European Express bonus for the longest route.
 - **A board that looks like the printed one**: cities and route curves are traced from a photo of the real board.
+- **Two maps**: Europe and the United Kingdom (Map Collection 5: 35 trains, 57 tickets, technology cards
+  that unlock longer routes, Wales/Scotland/Ireland and ferries). The host picks the map in the lobby.
+  Not included from the UK box: the Right of Way card and the advanced technologies.
 - **2–5 players**: any mix of humans and bots, with three bot levels from beginner to strong.
 - **Multiplayer in the browser**: invite friends over your Wi-Fi or with a public link. Players can reconnect,
   move their seat to another device, or hand it to a bot if they drop out.

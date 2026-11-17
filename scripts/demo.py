@@ -1,7 +1,7 @@
 """Serve a pre-played table and screenshot it (visual checks during development).
 
 uv run python scripts/demo.py [--moves 60] [--bots 3] [--stage play|tickets|over|lobby] [--size 1440x900]
-                              [--out shots/game.png] [--serve]
+                              [--out shots/game.png] [--serve] [--map uk]
 """
 
 from __future__ import annotations
@@ -24,10 +24,18 @@ TOKEN = "d" * 32
 PORT = 8765
 
 
-def prepare(stage: str = "play", moves: int = 60, bots: int = 3, seed: int = 3, delay_scale: float = 0.0) -> Room:
+def prepare(
+    stage: str = "play",
+    moves: int = 60,
+    bots: int = 3,
+    seed: int = 3,
+    delay_scale: float = 0.0,
+    map_key: str = "europe",
+) -> Room:
     """A room with one human ("Dima", token TOKEN) and bots, fast-forwarded to `stage`."""
     room = Room("DEMO", delay_scale=delay_scale, seed=seed)
     me = room.join(TOKEN, "Dima")
+    room.handle(me.id, {"type": "settings", "changes": {"map": map_key}})
     for key in ["expert", "conductor", "rookie", "expert"][:bots]:
         room.handle(me.id, {"type": "add_bot", "bot": key})
     if stage == "lobby":
@@ -64,7 +72,7 @@ async def serving(app: FastAPI, room: Room, port: int = PORT) -> AsyncIterator[s
 
 
 async def run(args: argparse.Namespace) -> None:
-    room = prepare(args.stage, args.moves, args.bots, args.seed)
+    room = prepare(args.stage, args.moves, args.bots, args.seed, map_key=args.map)
     app = create_app()
     async with serving(app, room) as url:
         w, h = args.size.split("x")
@@ -86,6 +94,7 @@ def main() -> None:
     ap.add_argument("--out", default="shots/game.png")
     ap.add_argument("--serve", action="store_true", help="keep serving after the screenshot")
     ap.add_argument("--seed", type=int, default=3)
+    ap.add_argument("--map", default="europe", help="europe | uk")
     asyncio.run(run(ap.parse_args()))
 
 

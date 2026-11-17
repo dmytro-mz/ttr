@@ -23,6 +23,7 @@ from ttr.game import rules
 from ttr.game.actions import (
     Action,
     BuildStation,
+    BuyTech,
     Claim,
     DrawCard,
     DrawTickets,
@@ -33,6 +34,7 @@ from ttr.game.actions import (
 )
 from ttr.game.engine import Phase, View
 from ttr.game.model import COLORS, LOCO, Route, Ticket
+from ttr.game.techs import TECH_BY_KEY
 
 
 @dataclass(frozen=True)
@@ -89,12 +91,19 @@ class PlannerBot(Bot):
         ]
         if not open_tracks:
             return "blocked", None
-        return "open", min(open_tracks, key=lambda r: self._effort(r, view.hand))
+        return "open", min(open_tracks, key=lambda r: self._effort(r, view))
 
-    def _effort(self, r: Route, hand: dict[str, int]) -> float:
+    def _missing(self, view: View, r: Route) -> frozenset[str]:
+        """Technologies `r` needs that this player doesn't have yet."""
+        return view.board.tech_needs[r.id] - view.techs[view.seat]
+
+    def _effort(self, r: Route, view: View) -> float:
+        hand = view.hand
         cost = r.length + 0.6 * r.ferry + (0.7 if r.tunnel else 0.0) - self.config.long_bias * (r.points - r.length)
         if r.color is not None:
             cost += 0.15 * max(0, r.length - hand.get(r.color, 0))
+        # Technologies are paid with locomotives once; count a share of that against each route needing them.
+        cost += sum(2.2 * TECH_BY_KEY[t].cost for t in self._missing(view, r)) / 2
         return cost
 
     def plan(self, view: View, tickets: list[Ticket]) -> Plan:
@@ -119,7 +128,7 @@ class PlannerBot(Bot):
                     return 0.0 if self.config.overlap else 0.5 * float(track.length if track else 0)
                 if kind == "open":
                     assert track is not None
-                    return self._effort(track, view.hand)
+                    return self._effort(track, view)
                 if key & my_station_cities:
                     return 0.5
                 if len(plan.bridges) < stations_left and not all(c in view.station_at for c in key):
@@ -185,6 +194,10 @@ class PlannerBot(Bot):
                 return last
         open_tickets = self._open_tickets(view)
         plan = self.plan(view, open_tickets)
+        if view.rules.technologies and not view.tech_bought and view.tech_options:
+            tech = self.tech_move(view, plan)
+            if tech is not None:
+                return tech
         claim = self.claim_from_plan(view, plan)
         if claim is not None:
             return claim
@@ -220,6 +233,40 @@ class PlannerBot(Bot):
             color, locos = view.station_payments[0]
             return BuildStation(free[0], color, locos)
         return Pass()
+
+    def _tech_needs(self, view: View, plan: Plan) -> Counter[str]:
+        """Technologies the planned routes still need, counted per route."""
+        need: Counter[str] = Counter()
+        for key in plan.conns:
+            _, track = self._conn_state(view, key)
+            if track is not None:
+                need.update(self._missing(view, track))
+        return need
+
+    def tech_move(self, view: View, plan: Plan) -> Action | None:
+        """Buy the technology the plan needs most (cheap first); a few bonus ones if they cost only locomotives."""
+        need = self._tech_needs(view, plan)
+        best: tuple[float, str] | None = None
+        for key, cards in view.tech_options.items():
+            tech = TECH_BY_KEY[key]
+            swapped = sum(n for c, n in cards.items() if c != LOCO)
+            if key in need:
+                if swapped > 4 and view.hand_counts[view.seat] < swapped + 6:
+                    continue
+                value = 20.0 + 3.0 * need[key] - 2.0 * tech.cost - 0.5 * swapped
+            elif swapped:
+                continue
+            elif key == "lagging" and view.my_trains >= 14:
+                value = 6.0 + view.my_trains / 10
+            elif key == "double_heading" and len(view.tickets) >= 3 and view.my_trains >= 8:
+                value = 3.0 + len(view.tickets)
+            elif key == "turbines" and need.get("propellers"):
+                value = 4.0
+            else:
+                continue
+            if best is None or value > best[0]:
+                best = (value, key)
+        return BuyTech(best[1]) if best is not None else None
 
     def _best_payment(self, view: View, route: Route, reserve: Counter[str]) -> rules.Payment | None:
         options = view.claimable.get(route.id)
@@ -376,7 +423,8 @@ class PlannerBot(Bot):
         if best[0] >= 1.0:
             return DrawCard(best[1])
         if not second and LOCO in view.face_up:
-            need_locos = self._demand(view, plan)[LOCO] > view.hand.get(LOCO, 0)
+            tech_locos = sum(TECH_BY_KEY[t].cost for t in self._tech_needs(view, plan))
+            need_locos = self._demand(view, plan)[LOCO] + min(tech_locos, 4) > view.hand.get(LOCO, 0)
             if need_locos or self.rng.random() < self.config.loco_greed * 0.5:
                 return DrawCard(view.face_up.index(LOCO))
         if view.can_blind:
@@ -410,6 +458,8 @@ class RookieBot(Bot):
             assert view.tunnel is not None
             options = rules.tunnel_pay_options(view.tunnel.extra, view.tunnel.color, view.hand)
             return TunnelPay(options[0]) if options else TunnelDecline()
+        if view.tech_options and rng.random() < 0.35:
+            return BuyTech(rng.choice(sorted(view.tech_options)))
         face_up = [i for i, ok in enumerate(view.face_up_ok) if ok]
         if view.phase == Phase.SECOND_CARD:
             if view.can_blind and (not face_up or rng.random() < 0.6):

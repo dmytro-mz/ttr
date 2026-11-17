@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from itertools import product
 
@@ -23,52 +23,124 @@ def route_open(route: Route, owners: Mapping[int, int], seat: int, n_players: in
     return True
 
 
-def payment_options(route: Route, hand: Mapping[str, int]) -> list[Payment]:
-    """Every distinct legal way to pay for `route` from `hand`, fewest locomotives first."""
-    return _options(route.length, route.color, route.ferry, hand)
+def payment_options(route: Route, hand: Mapping[str, int], swap_rate: int = 0) -> list[Payment]:
+    """Every distinct legal way to pay for `route` from `hand`, fewest locomotives first.
+
+    With `swap_rate` > 0 (UK map) that many cards of any colours also count as one locomotive.
+    """
+    return _options(route.length, route.color, route.ferry, hand, swap_rate)
 
 
 def station_options(cost: int, hand: Mapping[str, int]) -> list[Payment]:
     return _options(cost, None, 0, hand)
 
 
-def _options(length: int, color: str | None, min_locos: int, hand: Mapping[str, int]) -> list[Payment]:
-    locos = hand.get(LOCO, 0)
+def wild_cards(
+    hand: Mapping[str, int],
+    used: Mapping[str, int],
+    wilds: int,
+    swap_rate: int,
+    swap: Mapping[str, int] | None = None,
+) -> dict[str, int] | None:
+    """Cards that pay `wilds` locomotive spaces on top of `used`: real locomotives first, then groups of
+    `swap_rate` other cards. The player may pick those with `swap` (exactly the cards needed, no locomotives);
+    otherwise they come from the smallest piles so big sets survive. None if the hand can't do it."""
+    left = Counter({c: n - used.get(c, 0) for c, n in hand.items() if n - used.get(c, 0) > 0})
+    if any(used.get(c, 0) > hand.get(c, 0) for c in used):
+        return None
+    real = min(wilds, left[LOCO])
+    cards = {LOCO: real} if real else {}
+    groups = wilds - real
+    if not groups:
+        return cards
+    if not swap_rate:
+        return None
+    need = groups * swap_rate
+    others = Counter({c: n for c, n in left.items() if c != LOCO})
+    if swap:
+        if sum(swap.values()) != need or any(c == LOCO or n < 0 or n > others[c] for c, n in swap.items()):
+            return None
+        return {**cards, **{c: n for c, n in swap.items() if n}}
+    if sum(others.values()) < need:
+        return None
+    for c in sorted(others, key=lambda c: (others[c], c)):
+        take = min(others[c], need)
+        if take:
+            cards[c] = take
+            need -= take
+        if not need:
+            break
+    return cards
+
+
+def _options(
+    length: int, color: str | None, min_locos: int, hand: Mapping[str, int], swap_rate: int = 0
+) -> list[Payment]:
     out: list[Payment] = []
-    colors = (color,) if color else COLORS
-    for c in colors:
+    seen: set[Payment] = set()
+    for c in (color,) if color else COLORS:
         have = hand.get(c, 0)
-        for n_loco in range(min_locos, min(length, locos) + 1):
-            need = length - n_loco
-            if need == 0:
-                break
-            if have >= need:
-                out.append((c, n_loco))
-    if locos >= length:
-        out.append((None, length))
+        for wilds in range(min_locos, length + 1):
+            need = length - wilds
+            if need and have < need:
+                continue
+            used = {c: need} if need else {}
+            if wild_cards(hand, used, wilds, swap_rate) is None:
+                continue
+            pay: Payment = (c if need else None, wilds)
+            if pay not in seen:
+                seen.add(pay)
+                out.append(pay)
     out.sort(key=lambda p: (p[1], -hand.get(p[0] or LOCO, 0)))
     return out
 
 
-def payment_cards(length: int, payment: Payment) -> dict[str, int]:
-    color, locos = payment
-    cards = {LOCO: locos} if locos else {}
-    if length - locos:
-        assert color is not None
-        cards[color] = length - locos
+def payment_cards(
+    length: int,
+    payment: Payment,
+    hand: Mapping[str, int] | None = None,
+    swap_rate: int = 0,
+    swap: Mapping[str, int] | None = None,
+) -> dict[str, int]:
+    """The cards a payment spends. Without `hand` every wild space is a real locomotive."""
+    color, wilds = payment
+    cards: dict[str, int] = {color: length - wilds} if length - wilds else {}
+    if hand is None:
+        return {**({LOCO: wilds} if wilds else {}), **cards}
+    wild = wild_cards(hand, cards, wilds, swap_rate, swap)
+    assert wild is not None
+    for c, n in wild.items():
+        cards[c] = cards.get(c, 0) + n
     return cards
 
 
-def valid_payment(length: int, color: str | None, min_locos: int, hand: Mapping[str, int], payment: Payment) -> bool:
-    pay_color, locos = payment
-    if not isinstance(locos, int) or locos < min_locos or locos > length or hand.get(LOCO, 0) < locos:
+def valid_payment(
+    length: int,
+    color: str | None,
+    min_locos: int,
+    hand: Mapping[str, int],
+    payment: Payment,
+    swap_rate: int = 0,
+    swap: Mapping[str, int] | None = None,
+) -> bool:
+    pay_color, wilds = payment
+    if not isinstance(wilds, int) or wilds < min_locos or wilds > length:
         return False
-    rest = length - locos
+    rest = length - wilds
     if rest == 0:
-        return pay_color is None or pay_color in COLORS
-    if pay_color not in COLORS or (color is not None and pay_color != color):
+        if pay_color is not None and pay_color not in COLORS:
+            return False
+    elif pay_color not in COLORS or (color is not None and pay_color != color) or hand.get(pay_color, 0) < rest:
         return False
-    return hand.get(pay_color, 0) >= rest
+    used = {pay_color: rest} if rest else {}
+    return wild_cards(hand, used, wilds, swap_rate, swap) is not None
+
+
+def tech_cards(
+    cost: int, hand: Mapping[str, int], swap_rate: int, swap: Mapping[str, int] | None = None
+) -> dict[str, int] | None:
+    """Cards spent on a technology costing `cost` locomotives, or None if the hand can't afford it."""
+    return wild_cards(hand, {}, cost, swap_rate, swap)
 
 
 def tunnel_extra(revealed: Sequence[str], color: str | None) -> int:

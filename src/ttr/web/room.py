@@ -22,12 +22,14 @@ from typing import Any, Protocol
 from ttr.bots import REGISTRY, Bot, PlannerBot
 from ttr.game import actions
 from ttr.game.actions import Action
-from ttr.game.engine import Event, Game, IllegalMove, Phase, RulesConfig
+from ttr.game.engine import Event, Game, IllegalMove, Phase
+from ttr.game.maps import DEFAULT_MAP, MAPS, MapInfo
 from ttr.game.rules import longest_path, tunnel_pay_options
+from ttr.game.techs import TECH_BY_KEY
 
 log = logging.getLogger(__name__)
 
-MAX_SEATS = 5
+MAX_SEATS = 5  # most seats on any map
 MIN_SEATS = 2
 MAX_NAME = 20
 MAX_CHAT = 240
@@ -57,10 +59,13 @@ class Settings:
     bot_speed: str = "normal"
     hints: bool = False
     doubles_all: bool = False  # house rule: both tracks of double routes open in 2-3 player games
+    map: str = DEFAULT_MAP
 
     def update(self, changes: dict[str, Any]) -> None:
         for key, value in changes.items():
-            if key == "turn_timer" and value in TURN_TIMERS:
+            if key == "map" and value in MAPS:
+                self.map = str(value)
+            elif key == "turn_timer" and value in TURN_TIMERS:
                 self.turn_timer = int(value)
             elif key == "bot_speed" and value in BOT_SPEEDS:
                 self.bot_speed = str(value)
@@ -149,7 +154,7 @@ class Room:
             else:
                 log.info("table %s: %s joined%s", self.id, member.name, where)
             self._say(f"{member.name} joined the table")
-            if self.status == "lobby" and len(self.seats) < MAX_SEATS:
+            if self.status == "lobby" and len(self.seats) < self.max_seats:
                 self.seats.append(Seat(name=member.name, member_id=member.id))
         elif name and name != member.name:
             self._rename(member, name)
@@ -198,6 +203,14 @@ class Room:
         log.info("table %s: %s is now the host", self.id, new.name)
         self._say(f"{new.name} is now the host")
         self._emit({"kind": "presence"})
+
+    @property
+    def map_info(self) -> MapInfo:
+        return MAPS[self.settings.map]
+
+    @property
+    def max_seats(self) -> int:
+        return self.map_info.max_players
 
     def seat_of(self, member_id: str) -> int | None:
         for i, seat in enumerate(self.seats):
@@ -257,6 +270,9 @@ class Room:
                 changes = msg.get("changes")
                 if not isinstance(changes, dict):
                     raise RoomError("invalid settings")
+                chosen = MAPS.get(changes.get("map", ""))
+                if chosen is not None and len(self.seats) > chosen.max_players:
+                    raise RoomError(f"{chosen.label} is for up to {chosen.max_players} players — remove a seat first")
                 self.settings.update(changes)
                 self._emit({"kind": "lobby"})
             case "start" | "play_again":
@@ -306,7 +322,7 @@ class Room:
         self._require_lobby()
         if self.seat_of(member.id) is not None:
             return
-        if len(self.seats) >= MAX_SEATS:
+        if len(self.seats) >= self.max_seats:
             raise RoomError("The table is full")
         self.seats.append(Seat(name=member.name, member_id=member.id))
         self._emit({"kind": "lobby"})
@@ -323,7 +339,7 @@ class Room:
         bot = REGISTRY.get(key)
         if bot is None:
             raise RoomError("Unknown bot")
-        if len(self.seats) >= MAX_SEATS:
+        if len(self.seats) >= self.max_seats:
             raise RoomError("The table is full")
         names = {s.name for s in self.seats}
         name, n = bot.label, 1
@@ -363,14 +379,24 @@ class Room:
         for seat in self.seats:
             seat.agent = REGISTRY[seat.bot].make(self.rng.randrange(2**31)) if seat.bot else None
             seat.autoplay = False
-        rules = RulesConfig(double_min_players=2) if self.settings.doubles_all else RulesConfig()
-        self.game = Game(n, seed=self.rng.randrange(2**63), rules_config=rules)
+        info = self.map_info
+        if n > info.max_players:
+            raise RoomError(f"{info.label} is for up to {info.max_players} players")
+        rules = info.rules()
+        if self.settings.doubles_all:
+            rules = dataclasses.replace(rules, double_min_players=2)
+        self.game = Game(n, seed=self.rng.randrange(2**63), rules_config=rules, board=info.board)
         self.game_no += 1
         self.status = "playing"
         self.last_claim = None
         self._longest = None
         log.info("table %s: game %d started with %s", self.id, self.game_no, self._lineup())
-        self._say(f"Game {self.game_no} starts! Choose at least 2 of your 4 destination tickets.")
+        keep = rules.initial_keep
+        offered = rules.initial_long + rules.initial_offer
+        self._say(
+            f"Game {self.game_no} starts on the {info.label} map! "
+            f"Choose at least {keep} of your {offered} destination tickets."
+        )
         self._emit({"kind": "game_start"})
 
     def _to_lobby(self) -> None:
@@ -382,7 +408,7 @@ class Room:
             seat.agent = None
             seat.autoplay = False
         for member in self.members.values():
-            if member.connections and self.seat_of(member.id) is None and len(self.seats) < MAX_SEATS:
+            if member.connections and self.seat_of(member.id) is None and len(self.seats) < self.max_seats:
                 self.seats.append(Seat(name=member.name, member_id=member.id))
         self._say("Back to the lobby")
         self._emit({"kind": "lobby"})
@@ -474,6 +500,9 @@ class Room:
                 )
             case "start":
                 self._say(f"Everyone has their tickets. {name} goes first!", seat)
+            case "tech":
+                tech = TECH_BY_KEY[ev["tech"]]
+                self._say(f"{name} bought {tech.icon} {tech.name} with {_cards_text(ev['cards'])}", seat)
             case "station":
                 self._say(f"{name} built a station in {ev['city']} with {_cards_text(ev['cards'])}", seat)
             case "last_round":
@@ -533,7 +562,7 @@ class Room:
                     return delay, lambda s=seat: self._auto_move(s)
         elif self._is_auto(game.current):
             base = {Phase.SECOND_CARD: 0.8, Phase.TUNNEL: 1.6, Phase.CHOOSE_TICKETS: 1.4}.get(game.phase, 1.1)
-            delay = self._wait(("move", self.game_no, game.turn, game.phase), self._bot_delay(base))
+            delay = self._wait(("move", self.game_no, game.turn, game.phase, game.tech_bought), self._bot_delay(base))
             return delay, lambda s=game.current: self._auto_move(s)
         if self._deadline is not None:
             return max(0.0, self._deadline[1] - time.monotonic()), self._timeout
@@ -647,6 +676,7 @@ class Room:
             "host": self.host_id,
             "you": {"member": member_id, "seat": you},
             "settings": dataclasses.asdict(self.settings),
+            "max_seats": self.max_seats,
             "seats": seats,
             "spectators": spectators,
             "game": self._game_state(you),
@@ -681,6 +711,7 @@ class Room:
                 {
                     "trains": p.trains,
                     "stations": list(p.stations),
+                    "techs": sorted(p.techs),
                     "hand": p.hand_size,
                     "tickets": len(p.tickets),
                     "points": p.points,
@@ -715,6 +746,14 @@ class Room:
             "tunnel": tunnel,
             "last_claim": list(self.last_claim) if self.last_claim else None,
             "double_min_players": game.rules.double_min_players,
+            "rules": {
+                "stations": game.rules.stations,
+                "technologies": game.rules.technologies,
+                "express": game.rules.express_bonus,
+                "swap_rate": game.rules.swap_rate,
+                "trains": game.rules.trains,
+            },
+            "tech_bought": game.tech_bought,
             "me": self._my_state(game, you) if you is not None else None,
             "result": self._result(game) if over else None,
             "time_left": None,
@@ -744,6 +783,9 @@ class Room:
             "can_tickets": False,
             "tunnel_options": [],
             "can_pass": False,
+            "techs": sorted(p.techs),
+            "tech_options": {},
+            "swap_rate": game.swap_rate(seat),
         }
         if my_turn:
             if game.phase in (Phase.TURN, Phase.SECOND_CARD):
@@ -752,6 +794,7 @@ class Room:
             if game.phase == Phase.TURN:
                 me["claimable"] = {str(r): opts for r, opts in game.claimable(seat).items()}
                 me["station_options"] = game.station_payments(seat)
+                me["tech_options"] = game.tech_options(seat)
                 me["can_tickets"] = bool(game.ticket_deck)
                 me["can_pass"] = not game.has_move(seat)
             if game.phase == Phase.TUNNEL and game.tunnel is not None:

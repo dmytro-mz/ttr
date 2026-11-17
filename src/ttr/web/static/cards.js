@@ -120,10 +120,15 @@ export function paymentChips(length, color, locos) {
 
 // The card's map window: both cities with room for their labels, at the card's aspect ratio.
 const TM_ASPECT = 1.45;
-const TM_MIN_W = 420;
+const size = { w: 1000, h: 650 }; // the board the land symbol is drawn for
+export function setMapSize(w, h) {
+  size.w = w;
+  size.h = h;
+}
 
 function ticketView(a, b) {
-  let w = Math.max(TM_MIN_W, Math.abs(a.x - b.x) * 1.25 + 120);
+  const minW = size.w * 0.42;
+  let w = Math.max(minW, Math.abs(a.x - b.x) * 1.25 + size.w * 0.12);
   let h = w / TM_ASPECT;
   const needH = Math.abs(a.y - b.y) + w * 0.34;
   if (needH > h) [h, w] = [needH, needH * TM_ASPECT];
@@ -161,7 +166,7 @@ export function ticketCard(ticket, cityPos, { done = false, cls = "", ...attrs }
         "svg",
         { viewBox: `${v.x} ${v.y} ${v.w} ${v.h}`, preserveAspectRatio: "xMidYMid meet" },
         s("rect", { x: v.x - v.w, y: v.y - v.h, width: v.w * 3, height: v.h * 3, class: "tm-sea" }),
-        s("use", { href: "#land-sym", x: 0, y: 0, width: 1000, height: 650, class: "tm-land" }),
+        s("use", { href: "#land-sym", x: 0, y: 0, width: size.w, height: size.h, class: "tm-land" }),
         s("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: "tm-line", "stroke-width": dot * 0.45, "stroke-dasharray": `${dot} ${dot * 0.6}` }),
         s("circle", { cx: a.x, cy: a.y, r: dot, class: "tm-city", "stroke-width": dot * 0.3 }),
         s("circle", { cx: b.x, cy: b.y, r: dot, class: "tm-city", "stroke-width": dot * 0.3 }),
