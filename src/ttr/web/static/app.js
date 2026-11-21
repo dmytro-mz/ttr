@@ -106,7 +106,7 @@ function useMap(key) {
   setMapSize(m.map.width, m.map.height);
   document.getElementById("land-holder")?.remove();
   document.body.append(
-    s("svg", { class: "defs-holder", id: "land-holder", width: 0, height: 0 }, s("defs", {}, s("symbol", { id: "land-sym", viewBox: `0 0 ${m.map.width} ${m.map.height}` }, s("path", { d: m.land.land })))),
+    s("svg", { class: "defs-holder", id: "land-holder", width: 0, height: 0 }, s("defs", {}, s("clipPath", { id: "flag-clip", clipPathUnits: "objectBoundingBox" }, s("circle", { cx: 0.5, cy: 0.5, r: 0.5 })), s("symbol", { id: "land-sym", viewBox: `0 0 ${m.map.width} ${m.map.height}` }, s("path", { d: m.land.land })))),
   );
 }
 
@@ -952,12 +952,6 @@ function renderLobby(st, main) {
   const mySeat = st.you.seat;
   const n = st.seats.length;
   const hostName = st.seats.find((s) => s.member === st.host)?.name || st.spectators.find((s) => s.member === st.host)?.name || "the host";
-  const local = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
-  let note = null;
-  if (!S.config.public_url) {
-    if (local && !S.config.lan_url) note = "This link only works on this computer. Restart with `uv run ttr serve --tunnel` to invite people over the internet.";
-    else if (!location.hostname.endsWith("trycloudflare.com")) note = "Works for people on the same network. For friends elsewhere, run `uv run ttr serve --tunnel`.";
-  }
   const seatRows = st.seats.map((s, i) => {
     const bot = s.bot ? botInfo(s.bot) : null;
     const isMe = i === mySeat;
@@ -1066,7 +1060,7 @@ function renderLobby(st, main) {
       ),
     ),
   );
-  main.replaceChildren(h("section", { class: "lobby" }, note ? h("p", { class: "lobby-note" }, "ℹ️ ", note) : null, mapPanel, h("div", { class: "lobby-grid" }, seatsPanel, botsPanel, settingsPanel), actions));
+  main.replaceChildren(h("section", { class: "lobby" }, mapPanel, h("div", { class: "lobby-grid" }, seatsPanel, botsPanel, settingsPanel), actions));
 }
 
 // ------------------------------------------------------------------ game view

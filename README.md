@@ -47,6 +47,9 @@ click **Start game**.
 | `uv run ttr serve --tunnel` | Anyone, through a temporary public `trycloudflare.com` link |
 | `uv run ttr serve --public-url https://…` | Anyone, if you host the server behind your own domain or reverse proxy |
 
+The **Copy invite link** button in the lobby copies the best link available. With plain `uv run ttr serve` opened on
+`localhost` and no LAN address, the link only works on your own computer, so use `--tunnel` for friends elsewhere.
+
 Run `uv run ttr serve --help` for all options (host, port, and so on).
 
 ## How to play

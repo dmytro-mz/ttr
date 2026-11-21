@@ -1,6 +1,6 @@
 // The SVG game board: map art, route spaces, cities, score track, claimed trains and stations.
 import { h, s } from "./dom.js";
-import { PLAYER_FILL, ROUTE_FILL } from "./cards.js";
+import { PLAYER_FILL, ROUTE_FILL, flagEl } from "./cards.js";
 
 const GAP = 2.6; // between cars
 const CAR_W = 8.6;
@@ -580,7 +580,8 @@ export class Board {
       { id: "hazard", width: 5, height: 5, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" },
       s("rect", { width: 2.1, height: 5, fill: "rgba(0, 0, 0, 0.8)" }),
     );
-    const defs = s("defs", {}, rainbow, hazard, ...playerGrads);
+    const flagClip = s("clipPath", { id: "flag-clip", clipPathUnits: "objectBoundingBox" }, s("circle", { cx: 0.5, cy: 0.5, r: 0.5 }));
+    const defs = s("defs", {}, rainbow, hazard, flagClip, ...playerGrads);
 
     const frame = s(
       "g",
@@ -651,12 +652,14 @@ export class Board {
   }
 
   cityEl(c, [x, y]) {
+    const flag = flagEl(c.country, 7);
     const g = s("g", { class: "city", "data-city": c.name, transform: `translate(${x} ${y})` });
     g.append(
       s("circle", { r: 12.5, class: "city-plate" }),
       s("circle", { r: 12.5, class: "city-halo" }),
-      s("circle", { r: 5.6, class: "city-dot" }),
-      s("circle", { r: 2.2, cx: -1, cy: -1, class: "city-core" }),
+      ...(flag
+        ? [flag]
+        : [s("circle", { r: 5.6, class: "city-dot" }), s("circle", { r: 2.2, cx: -1, cy: -1, class: "city-core" })]),
     );
     g.addEventListener("click", (e) => this.handlers.onCity?.(c.name, e));
     g.addEventListener("pointerenter", (e) => this.handlers.onHover?.({ city: c.name }, e));

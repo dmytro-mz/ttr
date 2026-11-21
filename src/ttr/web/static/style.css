@@ -660,7 +660,6 @@ aside.side { border-left: 1px solid var(--line); background: rgba(10, 6, 3, 0.4)
 }
 
 /* ---------------------------------------------------------------- lobby note, swap picker */
-.lobby-note { margin: 0; color: var(--muted); font-size: 0.85rem; }
 .invite-btn { white-space: nowrap; }
 .swap-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin: 14px 0; }
 .swap-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px; border-radius: 10px; border: 2px solid transparent; }
@@ -668,3 +667,4 @@ aside.side { border-left: 1px solid var(--line); background: rgba(10, 6, 3, 0.4)
 .swap-card .tcard { --tw: 72px; }
 .swap-step { display: flex; align-items: center; gap: 8px; font-weight: 800; }
 .swap-step span { min-width: 1.2em; text-align: center; }
+.flag-ring { fill: none; stroke: #3d230d; }

@@ -168,14 +168,54 @@ export function ticketCard(ticket, cityPos, { done = false, cls = "", ...attrs }
         s("rect", { x: v.x - v.w, y: v.y - v.h, width: v.w * 3, height: v.h * 3, class: "tm-sea" }),
         s("use", { href: "#land-sym", x: 0, y: 0, width: size.w, height: size.h, class: "tm-land" }),
         s("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: "tm-line", "stroke-width": dot * 0.45, "stroke-dasharray": `${dot} ${dot * 0.6}` }),
-        s("circle", { cx: a.x, cy: a.y, r: dot, class: "tm-city", "stroke-width": dot * 0.3 }),
-        s("circle", { cx: b.x, cy: b.y, r: dot, class: "tm-city", "stroke-width": dot * 0.3 }),
+        ...[a, b].map((c) => flagEl(c.country, dot * 1.6, { x: c.x, y: c.y }) || s("circle", { cx: c.x, cy: c.y, r: dot, class: "tm-city", "stroke-width": dot * 0.3 })),
         ticketLabel(a, b, ticket.a, fs, v),
         ticketLabel(b, a, ticket.b, fs, v),
       ),
     ),
     h("span", { class: "ticket-value" }, ticket.value),
     done ? h("span", { class: "ticket-done", title: "Completed" }, "✓") : null,
+  );
+}
+
+// A tiny round country flag (UK map), drawn in a -1..1 square and clipped to a circle by #flag-clip.
+const FLAGS = {
+  england: () => [rect(-1, -1, 2, 2, "#fff"), rect(-1, -0.24, 2, 0.48, "#ce1124"), rect(-0.24, -1, 0.48, 2, "#ce1124")],
+  scotland: () => [
+    rect(-1, -1, 2, 2, "#0065bd"),
+    s("path", { d: "M-1 -1 L1 1 M1 -1 L-1 1", stroke: "#fff", "stroke-width": 0.42 }),
+  ],
+  wales: () => [
+    rect(-1, -1, 2, 1, "#fff"),
+    rect(-1, 0, 2, 1, "#00a03c"),
+    s("path", { d: "M-0.72 0.42 L-0.38 0.05 L-0.5 -0.3 L-0.18 -0.12 L0.05 -0.5 L0.2 -0.2 L0.55 -0.42 L0.42 -0.02 L0.72 0.12 L0.3 0.25 L0.38 0.5 L0.05 0.3 L-0.3 0.5 Z", fill: "#d30731" }),
+  ],
+  ireland: () => [rect(-1, -1, 0.67, 2, "#169b62"), rect(-0.34, -1, 0.68, 2, "#fff"), rect(0.33, -1, 0.67, 2, "#ff883e")],
+  france: () => [rect(-1, -1, 0.67, 2, "#0055a4"), rect(-0.34, -1, 0.68, 2, "#fff"), rect(0.33, -1, 0.67, 2, "#ef4135")],
+  free: () => [
+    ...[0, 1, 2, 3, 4, 5, 6].map((i) => rect(-1, -1 + (i * 2) / 7, 2, 1 / 7 + 0.01, i % 2 ? "#fff" : "#b22234")),
+    rect(-1, -1, 1, 1.15, "#3c3b6e"),
+  ],
+};
+
+function rect(x, y, width, height, fill) {
+  return s("rect", { x, y, width, height, fill });
+}
+
+const COUNTRY_NAMES = { england: "England", scotland: "Scotland", wales: "Wales", ireland: "Ireland", france: "France", free: "America" };
+
+export function countryName(country) {
+  return COUNTRY_NAMES[country] || "";
+}
+
+export function flagEl(country, r, { x = 0, y = 0, cls = "" } = {}) {
+  const draw = FLAGS[country];
+  if (!draw) return null;
+  return s(
+    "g",
+    { class: `flag ${cls}`, transform: `translate(${x} ${y}) scale(${r})` },
+    s("g", { "clip-path": "url(#flag-clip)" }, draw()),
+    s("circle", { r: 1, class: "flag-ring", "stroke-width": 0.22 }),
   );
 }
 
