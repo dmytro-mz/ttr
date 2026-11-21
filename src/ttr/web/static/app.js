@@ -773,7 +773,7 @@ function showRules() {
         h(
           "ul",
           {},
-          h("li", {}, h("b", {}, "Tunnels"), " (dark dashed border): after you play the cards, 3 cards are turned from the deck. Each one matching your colour — or a locomotive — costs one extra card. Pay it or give up (you keep your cards)."),
+          h("li", {}, h("b", {}, "Tunnels"), " (dark bed with a tunnel mouth on every space): after you play the cards, 3 cards are turned from the deck. Each one matching your colour — or a locomotive — costs one extra card. Pay it or give up (you keep your cards)."),
           h("li", {}, h("b", {}, "Ferries"), " (spaces with a locomotive symbol): need at least that many locomotives."),
           h("li", {}, h("b", {}, "Double routes"), ": one player can't take both tracks; with 2–3 players only one track can be used."),
         ),
