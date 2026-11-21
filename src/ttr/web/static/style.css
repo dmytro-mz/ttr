@@ -468,7 +468,12 @@ aside.side { border-left: 1px solid var(--line); background: rgba(10, 6, 3, 0.4)
 
 .route { cursor: pointer; }
 .space-rect { stroke: rgba(40, 30, 22, 0.85); stroke-width: 0.7; }
-.tunnel-edge { fill: none; stroke: #15110e; stroke-width: 1.1; stroke-dasharray: 1.8 1.1; }
+.tunnel-rock { pointer-events: none; opacity: 0.9; }
+.rock-rect { fill: #2a211a; }
+.arch-stone { fill: #1a1410; stroke: #f1e3bd; stroke-width: 0.7; }
+.arch-mouth { fill: #000; }
+.car-arch { pointer-events: none; }
+.route.owned .car-arch { visibility: hidden; }
 .ferry-mark { fill: rgba(40, 30, 22, 0.85); pointer-events: none; }
 .route-hit { fill: none; stroke: transparent; stroke-width: 15; stroke-linecap: round; }
 .route-glow { fill: none; stroke: transparent; stroke-width: 15; stroke-linecap: round; transition: stroke 0.2s; }

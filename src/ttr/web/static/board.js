@@ -455,6 +455,16 @@ function locoGlyph(x, y, angle) {
   );
 }
 
+function tunnelArch(x, y) {
+  // Tunnel mouth printed on every space of a tunnel; kept upright whatever the route direction.
+  return s(
+    "g",
+    { class: "car-arch", transform: `translate(${x.toFixed(2)} ${y.toFixed(2)})` },
+    s("path", { d: "M-3.6 3.4 V-0.6 A3.6 3.6 0 0 1 3.6 -0.6 V3.4 Z", class: "arch-stone" }),
+    s("path", { d: "M-2 3.4 V-0.4 A2 2 0 0 1 2 -0.4 V3.4 Z", class: "arch-mouth" }),
+  );
+}
+
 const LABEL_POS = {
   n: [0, -12.5, "middle"],
   s: [0, 18.5, "middle"],
@@ -605,6 +615,8 @@ export class Board {
     this.mapCanvas = canvas;
     canvas.toBlob((blob) => mapArt.setAttribute("href", URL.createObjectURL(blob)), "image/jpeg", 0.9);
 
+    this.bedsG = s("g", { class: "tunnel-beds" });  // under every route so a bed never covers a neighbour's cars
+    for (const r of this.map.routes) if (r.tunnel) this.bedsG.append(this.tunnelBed(this.layout[r.id]));
     this.routesG = s("g", { class: "routes" });
     for (const r of this.map.routes) this.routesG.append(this.routeEl(r));
     this.trainsG = s("g", { class: "trains" });
@@ -622,6 +634,7 @@ export class Board {
       frame,
       track,
       mapArt,
+      this.bedsG,
       this.routesG,
       this.citiesG,
       this.trainsG,
@@ -640,14 +653,25 @@ export class Board {
       const t = `translate(${c.x.toFixed(2)} ${c.y.toFixed(2)}) rotate(${c.angle.toFixed(2)})`;
       const car = s("g", { transform: t, class: "space" });
       car.append(s("rect", { x: -lay.carLen / 2, y: -CAR_W / 2, width: lay.carLen, height: CAR_W, rx: 1.4, fill, class: "space-rect" }));
-      if (r.tunnel) car.append(s("rect", { x: -lay.carLen / 2 - 0.6, y: -CAR_W / 2 - 0.6, width: lay.carLen + 1.2, height: CAR_W + 1.2, rx: 1.8, class: "tunnel-edge" }));
       g.append(car);
+      if (r.tunnel) g.append(tunnelArch(c.x, c.y));
       if (i < r.ferry) g.append(locoGlyph(c.x, c.y, c.angle));
     });
     g.append(s("path", { d: lay.path, class: "route-hit" }));
     g.addEventListener("click", (e) => this.handlers.onRoute?.(r.id, e));
     g.addEventListener("pointerenter", (e) => this.handlers.onHover?.({ route: r.id }, e));
     g.addEventListener("pointerleave", (e) => this.handlers.onHover?.(null, e));
+    return g;
+  }
+
+  // Tunnel marking: a dark rock bed under the route (it stays as a rim around built trains); each space also
+  // gets a tunnel mouth (see tunnelArch). The bed is an enlarged copy of every car so it hugs bends.
+  tunnelBed(lay) {
+    const g = s("g", { class: "tunnel-rock" });
+    for (const p of lay.cars) {
+      const w = lay.carLen + 3.4, h = CAR_W + 2.8;
+      g.append(s("rect", { x: -w / 2, y: -h / 2, width: w, height: h, rx: 3, transform: `translate(${p.x.toFixed(2)} ${p.y.toFixed(2)}) rotate(${p.angle.toFixed(2)})`, class: "rock-rect" }));
+    }
     return g;
   }
 
