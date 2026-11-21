@@ -1,17 +1,18 @@
 // The SVG game board: map art, route spaces, cities, score track, claimed trains and stations.
 import { h, s } from "./dom.js";
-import { PLAYER_FILL, ROUTE_FILL } from "./cards.js";
+import { PLAYER_FILL, ROUTE_FILL, flagEl } from "./cards.js";
 
 const GAP = 2.6; // between cars
 const CAR_W = 8.6;
 const CITY_R = 10.5; // keep cars this far from a city centre
 const TRACK_OFF = 5.1; // half distance between the two tracks of a double route
 const RING = 30; // score track thickness around the map
-const TRACK_CELLS = { top: 30, right: 20, bottom: 30, left: 20 };
 const COMMIT_MS = 140; // gesture idle time before the zoom is re-rendered crisply
 const SEA = "#c2cbd3";
 const SERIF = '"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif';
 
+// Where a city is drawn: its main spot and any further sites (France has two landings on the UK board).
+const sitesOf = (c) => [[c.x, c.y], ...(c.sites || [])];
 const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
 
 // A route is a polyline: city a -> waypoints -> city b. Double tracks are the same polyline pushed
@@ -108,7 +109,8 @@ export function layoutRoutes(map) {
   const out = {};
   for (const r of map.routes) {
     const mid = r.path.map(([x, y]) => ({ x, y }));
-    const curve = sampleLine(offsetLine([city[r.a], ...mid, city[r.b]], r.side * TRACK_OFF));
+    const [from, to] = r.ends ? r.ends.map(([x, y]) => ({ x, y })) : [city[r.a], city[r.b]];
+    const curve = sampleLine(offsetLine([from, ...mid, to], r.side * TRACK_OFF));
     const { cars, carLen } = placeCars(curve, r.length);
     const line = [at(curve, CITY_R)];
     for (let i = 1; i < curve.pts.length - 1; i++) if (curve.len[i] > CITY_R && curve.len[i] < curve.total - CITY_R) line.push(curve.pts[i]);
@@ -123,8 +125,15 @@ export function layoutRoutes(map) {
   return out;
 }
 
+// The 100 score cells run around the map, in proportion to its sides.
+function trackCells(W, H) {
+  const top = Math.round((50 * W) / (W + H));
+  return { top, right: 50 - top, bottom: top, left: 50 - top };
+}
+
 function trackCell(i, W, H) {
-  const { top, right, bottom } = TRACK_CELLS;
+  const cells = trackCells(W, H);
+  const { top, right, bottom } = cells;
   const c = RING / 2;
   if (i < top) return { x: ((i + 0.5) * W) / top, y: -c };
   i -= top;
@@ -132,7 +141,7 @@ function trackCell(i, W, H) {
   i -= right;
   if (i < bottom) return { x: W - ((i + 0.5) * W) / bottom, y: H + c };
   i -= bottom;
-  return { x: -c, y: H - ((i + 0.5) * H) / TRACK_CELLS.left };
+  return { x: -c, y: H - ((i + 0.5) * H) / cells.left };
 }
 
 // Deterministic randomness so every client paints the same map.
@@ -145,7 +154,7 @@ function rng(seed) {
 
 // The printed map (sea, coast ripples, parchment land, borders, decorations) painted once into a bitmap.
 // One full-size canvas instead of tiled patterns: no seams, and nothing heavy for SVG to re-rasterize on zoom.
-function paintMap(land, W, H, scale) {
+function paintMap(land, W, H, scale, key) {
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(W * scale);
   canvas.height = Math.round(H * scale);
@@ -213,6 +222,11 @@ function paintMap(land, W, H, scale) {
   g.clip(landP, "evenodd");
   g.fillStyle = "#e8d7b8";
   g.fillRect(0, 0, W, H);
+  // Countries tinted like the printed board (UK map): clipped to the land by the clip above.
+  for (const region of land.regions || []) {
+    g.fillStyle = region.fill;
+    g.fill(new Path2D(region.d), "evenodd");
+  }
   const north = g.createLinearGradient(0, 0, 0, H * 0.45);
   north.addColorStop(0, "rgba(196, 196, 186, 0.55)");
   north.addColorStop(1, "rgba(196, 196, 186, 0)");
@@ -250,7 +264,7 @@ function paintMap(land, W, H, scale) {
   g.lineWidth = 0.9;
   g.stroke(landP);
 
-  decorate(g);
+  (key === "uk" ? decorateUK : decorate)(g, W, H);
 
   // Fine paper grain over everything (high-frequency, so tiling is invisible).
   const grain = document.createElement("canvas");
@@ -346,6 +360,89 @@ function decorate(g) {
   g.letterSpacing = "0px";
 }
 
+// The UK board: route scoring table top left, compass in the Atlantic and the seas' names.
+function decorateUK(g, W, H) {
+  const x0 = 20;
+  const y0 = 22;
+  g.fillStyle = "rgba(240, 232, 214, 0.6)";
+  g.strokeStyle = "rgba(90, 70, 48, 0.7)";
+  g.lineWidth = 0.8;
+  g.beginPath();
+  g.roundRect(x0, y0, 128, 84, 3);
+  g.fill();
+  g.stroke();
+  g.font = `800 8px ${SERIF}`;
+  g.textBaseline = "middle";
+  [
+    [1, 1],
+    [2, 2],
+    [3, 4],
+    [4, 7],
+    [5, 10],
+    [6, 15],
+  ].forEach(([len, pts], i) => {
+    const y = y0 + 9 + i * 12;
+    g.fillStyle = "#3b2a17";
+    g.textAlign = "left";
+    g.fillText(len, x0 + 6, y);
+    g.textAlign = "right";
+    g.fillText(pts, x0 + 122, y);
+    for (let k = 0; k < len; k++) {
+      g.fillStyle = "#6a7378";
+      g.beginPath();
+      g.roundRect(x0 + 15 + k * 11.6, y - 2.6, 10, 5.2, 1);
+      g.fill();
+    }
+  });
+  g.fillStyle = "rgba(84, 108, 122, 0.8)";
+  g.textAlign = "center";
+  g.font = `italic 700 12px ${SERIF}`;
+  g.letterSpacing = "4px";
+  g.fillText("ATLANTIC OCEAN", 205, 180);
+  g.font = `italic 700 9px ${SERIF}`;
+  g.fillText("ENGLISH CHANNEL", 440, 828);
+  g.save();
+  g.translate(582, 330);
+  g.rotate(Math.PI / 2);
+  g.font = `italic 700 11px ${SERIF}`;
+  g.fillText("NORTH SEA", 0, 0);
+  g.restore();
+  g.letterSpacing = "0px";
+  g.font = `italic 700 9.5px ${SERIF}`;
+  g.fillStyle = "rgba(60, 74, 90, 0.85)";
+  g.letterSpacing = "0.5px";
+  g.fillText("Southampton to New York", 108, 866);
+  g.font = `800 10px ${SERIF}`;
+  g.fillText("40 points", 108, 880);
+  g.letterSpacing = "0px";
+  // Compass rose
+  g.save();
+  g.translate(52, 772);
+  g.globalAlpha = 0.55;
+  g.strokeStyle = "#5f5a48";
+  g.lineWidth = 0.9;
+  g.beginPath();
+  g.arc(0, 0, 20, 0, Math.PI * 2);
+  g.stroke();
+  g.fillStyle = "#8a5b2c";
+  g.beginPath();
+  g.moveTo(0, -27);
+  g.lineTo(4.5, 0);
+  g.lineTo(0, 27);
+  g.lineTo(-4.5, 0);
+  g.fill();
+  g.fillStyle = "#5f5a48";
+  g.beginPath();
+  g.moveTo(-27, 0);
+  g.lineTo(0, -4.5);
+  g.lineTo(27, 0);
+  g.lineTo(0, 4.5);
+  g.fill();
+  g.font = `800 8px ${SERIF}`;
+  g.fillText("N", 0, -32);
+  g.restore();
+}
+
 function locoGlyph(x, y, angle) {
   // Small locomotive marking a ferry space that needs a locomotive card.
   return s(
@@ -438,17 +535,19 @@ export class Board {
       }
     }
     for (const city of this.map.cities) {
-      g.fillStyle = "rgba(236, 214, 178, 0.82)";
-      g.beginPath();
-      g.arc(city.x, city.y, 12.5, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = "#d27a2c";
-      g.strokeStyle = "#3d230d";
-      g.lineWidth = 1.3;
-      g.beginPath();
-      g.arc(city.x, city.y, 5.6, 0, Math.PI * 2);
-      g.fill();
-      g.stroke();
+      for (const [x, y] of sitesOf(city)) {
+        g.fillStyle = "rgba(236, 214, 178, 0.82)";
+        g.beginPath();
+        g.arc(x, y, 12.5, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = "#d27a2c";
+        g.strokeStyle = "#3d230d";
+        g.lineWidth = 1.3;
+        g.beginPath();
+        g.arc(x, y, 5.6, 0, Math.PI * 2);
+        g.fill();
+        g.stroke();
+      }
     }
     this.placeOverview();
   }
@@ -481,7 +580,8 @@ export class Board {
       { id: "hazard", width: 5, height: 5, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" },
       s("rect", { width: 2.1, height: 5, fill: "rgba(0, 0, 0, 0.8)" }),
     );
-    const defs = s("defs", {}, rainbow, hazard, ...playerGrads);
+    const flagClip = s("clipPath", { id: "flag-clip", clipPathUnits: "objectBoundingBox" }, s("circle", { cx: 0.5, cy: 0.5, r: 0.5 }));
+    const defs = s("defs", {}, rainbow, hazard, flagClip, ...playerGrads);
 
     const frame = s(
       "g",
@@ -501,7 +601,7 @@ export class Board {
 
     const mapArt = s("image", { x: 0, y: 0, width: W, height: H, class: "map-art", preserveAspectRatio: "none" });
     const scale = Math.min(4, Math.max(3, Math.ceil(window.devicePixelRatio || 1) * 2));
-    const canvas = paintMap(land, W, H, scale);
+    const canvas = paintMap(land, W, H, scale, this.map.key);
     this.mapCanvas = canvas;
     canvas.toBlob((blob) => mapArt.setAttribute("href", URL.createObjectURL(blob)), "image/jpeg", 0.9);
 
@@ -509,9 +609,9 @@ export class Board {
     for (const r of this.map.routes) this.routesG.append(this.routeEl(r));
     this.trainsG = s("g", { class: "trains" });
     this.citiesG = s("g", { class: "cities" });
-    for (const c of this.map.cities) this.citiesG.append(this.cityEl(c));
+    for (const c of this.map.cities) for (const at of sitesOf(c)) this.citiesG.append(this.cityEl(c, at));
     this.labelsG = s("g", { class: "labels" });
-    for (const c of this.map.cities) this.labelsG.append(this.labelEl(c));
+    for (const c of this.map.cities) for (const at of sitesOf(c)) this.labelsG.append(this.labelEl(c, at));
     this.stationsG = s("g", { class: "stations" });
     this.markersG = s("g", { class: "markers" });
 
@@ -551,13 +651,15 @@ export class Board {
     return g;
   }
 
-  cityEl(c) {
-    const g = s("g", { class: "city", "data-city": c.name, transform: `translate(${c.x} ${c.y})` });
+  cityEl(c, [x, y]) {
+    const flag = flagEl(c.country, 7);
+    const g = s("g", { class: "city", "data-city": c.name, transform: `translate(${x} ${y})` });
     g.append(
       s("circle", { r: 12.5, class: "city-plate" }),
       s("circle", { r: 12.5, class: "city-halo" }),
-      s("circle", { r: 5.6, class: "city-dot" }),
-      s("circle", { r: 2.2, cx: -1, cy: -1, class: "city-core" }),
+      ...(flag
+        ? [flag]
+        : [s("circle", { r: 5.6, class: "city-dot" }), s("circle", { r: 2.2, cx: -1, cy: -1, class: "city-core" })]),
     );
     g.addEventListener("click", (e) => this.handlers.onCity?.(c.name, e));
     g.addEventListener("pointerenter", (e) => this.handlers.onHover?.({ city: c.name }, e));
@@ -565,9 +667,20 @@ export class Board {
     return g;
   }
 
-  labelEl(c) {
+  labelEl(c, [x, y]) {
     const [dx, dy, anchor] = LABEL_POS[c.label] || LABEL_POS.s;
-    return s("text", { x: c.x + dx, y: c.y + dy, "text-anchor": anchor, class: "city-name", "data-city": c.name }, c.name.toUpperCase());
+    const name = c.name.toUpperCase();
+    const attrs = { x: x + dx, y: y + dy, "text-anchor": anchor, class: "city-name", "data-city": c.name };
+    if (name.length <= 14 || !name.includes(" ")) return s("text", attrs, name);
+    // A long name sits on two lines, like the printed board's "Llandrindod Wells".
+    const [first, ...rest] = name.split(" ");
+    const up = c.label.startsWith("n");
+    return s(
+      "text",
+      attrs,
+      s("tspan", { x: attrs.x, dy: up ? "-1.05em" : "0" }, first),
+      s("tspan", { x: attrs.x, dy: up ? "1.05em" : "1.05em" }, rest.join(" ")),
+    );
   }
 
   trainEl(rid, color, fresh) {

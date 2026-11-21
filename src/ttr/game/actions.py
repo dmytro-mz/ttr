@@ -18,6 +18,7 @@ class Claim:
     route: int
     color: str | None  # the one non-locomotive colour paid with (None when paying only locomotives)
     locos: int
+    swap: tuple[tuple[str, int], ...] = ()  # UK map: the cards chosen to stand in for locomotives (empty = auto)
 
 
 @dataclass(frozen=True)
@@ -48,11 +49,19 @@ class BuildStation:
 
 
 @dataclass(frozen=True)
+class BuyTech:
+    """UK map: buy one technology at the start of the turn (doesn't use up the turn's action)."""
+
+    tech: str
+    swap: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
 class Pass:
     """Only legal when no other action is possible."""
 
 
-Action = DrawCard | Claim | TunnelPay | TunnelDecline | DrawTickets | KeepTickets | BuildStation | Pass
+Action = DrawCard | Claim | TunnelPay | TunnelDecline | DrawTickets | KeepTickets | BuildStation | BuyTech | Pass
 
 
 class BadAction(ValueError):
@@ -63,6 +72,19 @@ def _int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise BadAction(f"{name} must be an integer")
     return value
+
+
+def _swap(value: object) -> tuple[tuple[str, int], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, dict):
+        raise BadAction("swap must be an object")
+    out = []
+    for c, n in value.items():
+        if c not in COLORS:
+            raise BadAction("unknown colour")
+        out.append((c, _int(n, "swap")))
+    return tuple(out)
 
 
 def _color(value: object) -> str | None:
@@ -80,7 +102,10 @@ def from_json(data: object) -> Action:
             return DrawCard(None if slot is None else _int(slot, "slot"))
         case "claim":
             return Claim(
-                _int(data.get("route"), "route"), _color(data.get("color")), _int(data.get("locos", 0), "locos")
+                _int(data.get("route"), "route"),
+                _color(data.get("color")),
+                _int(data.get("locos", 0), "locos"),
+                _swap(data.get("swap")),
             )
         case "tunnel_pay":
             return TunnelPay(_int(data.get("locos", 0), "locos"))
@@ -98,6 +123,11 @@ def from_json(data: object) -> Action:
             if not isinstance(city, str):
                 raise BadAction("city must be a string")
             return BuildStation(city, _color(data.get("color")), _int(data.get("locos", 0), "locos"))
+        case "tech":
+            tech = data.get("tech")
+            if not isinstance(tech, str):
+                raise BadAction("tech must be a string")
+            return BuyTech(tech, _swap(data.get("swap")))
         case "pass":
             return Pass()
     raise BadAction("unknown action")
@@ -107,8 +137,8 @@ def to_json(action: Action) -> dict[str, Any]:
     match action:
         case DrawCard(slot):
             return {"type": "draw_card", "slot": slot}
-        case Claim(route, color, locos):
-            return {"type": "claim", "route": route, "color": color, "locos": locos}
+        case Claim(route, color, locos, swap):
+            return {"type": "claim", "route": route, "color": color, "locos": locos, "swap": dict(swap)}
         case TunnelPay(locos):
             return {"type": "tunnel_pay", "locos": locos}
         case TunnelDecline():
@@ -119,6 +149,8 @@ def to_json(action: Action) -> dict[str, Any]:
             return {"type": "keep_tickets", "tickets": list(tickets)}
         case BuildStation(city, color, locos):
             return {"type": "station", "city": city, "color": color, "locos": locos}
+        case BuyTech(tech, swap):
+            return {"type": "tech", "tech": tech, "swap": dict(swap)}
         case Pass():
             return {"type": "pass"}
     raise BadAction("unknown action")

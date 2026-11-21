@@ -104,7 +104,7 @@ class Checker:
 async def run(args: argparse.Namespace) -> int:
     shots = Path(args.shots)
     shots.mkdir(parents=True, exist_ok=True)
-    room = prepare("tickets", bots=args.bots, seed=args.seed, delay_scale=0.02)
+    room = prepare("tickets", bots=args.bots, seed=args.seed, delay_scale=0.02, map_key=args.map)
     room.settings.hints = True
     app = create_app(delay_scale=0.02)
     async with serving(app, room, port=args.port) as url, async_playwright() as pw:
@@ -137,6 +137,7 @@ async def run(args: argparse.Namespace) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--map", default="europe", help="europe | uk")
     ap.add_argument("--bots", type=int, default=2)
     ap.add_argument("--seed", type=int, default=5)
     ap.add_argument("--max-turns", type=int, default=400)

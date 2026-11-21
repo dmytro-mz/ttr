@@ -85,7 +85,8 @@ def test_full_game_with_humans_and_a_bot() -> None:
     result = inboxes[1].last_state["game"]["result"]
     assert result and len(result["players"]) == 3
     assert all(
-        p["total"] == p["route_points"] + p["ticket_points"] + p["station_points"] + p["express_points"]
+        p["total"]
+        == p["route_points"] + p["ticket_points"] + p["station_points"] + p["tech_points"] + p["express_points"]
         for p in result["players"]
     )
 
@@ -95,7 +96,7 @@ def test_no_hidden_information_leaks() -> None:
     room.handle(inboxes[0].member_id, {"type": "start"})
     game = room.game
     assert game is not None
-    public_player_keys = {"trains", "stations", "hand", "tickets", "points", "choosing", "longest", "routes"}
+    public_player_keys = {"trains", "stations", "techs", "hand", "tickets", "points", "choosing", "longest", "routes"}
     hidden_events = 0
     seen = [0] * len(inboxes)
     for _ in range(4000):

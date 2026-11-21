@@ -1,10 +1,9 @@
 import { Board } from "./board.js";
-import { CARD_ORDER, COLOR_NAMES, PLAYER_FILL, cardBack, chip, paymentChips, richText, ticketBack, ticketCard, trainCard } from "./cards.js";
+import { CARD_ORDER, COLOR_NAMES, PLAYER_FILL, cardBack, chip, paymentChips, richText, setMapSize, ticketBack, ticketCard, trainCard } from "./cards.js";
 import { copyText, h, openDialog, s, toast } from "./dom.js";
 import { getVolume, isMuted, setMuted, setVolume, sfx, unlockAudio } from "./sound.js";
 
 const REACTIONS = ["👍", "😂", "😱", "😡", "🎉", "🤔", "😭", "🔥", "👏", "🙈"];
-const MAX_SEATS = 5;
 const SUMMARY_DELAY = 1800;
 
 const app = document.getElementById("app");
@@ -14,7 +13,9 @@ const overlay = document.getElementById("overlay");
 const URL_TOKEN = takeTokenFromUrl();
 
 const S = {
-  config: { public_url: null, lan_url: null, bots: [] },
+  config: { public_url: null, lan_url: null, bots: [], maps: [] },
+  maps: {}, // key -> { map, land }
+  mapKey: null,
   map: null,
   land: null,
   cityPos: {},
@@ -45,7 +46,6 @@ function freshUi() {
     hover: null,
     pinned: new Set(),
     handColor: null,
-    showClaimable: localStorage.getItem("ttr.showClaimable") === "1",
     hint: null,
     sideOpen: false,
     unread: 0,
@@ -90,6 +90,25 @@ const route = (id) => S.map.routes[id];
 const ticket = (id) => S.map.tickets[id];
 const seatColor = (st, seat) => st.seats[seat]?.color || "black";
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const mapInfo = (key) => S.config.maps.find((m) => m.key === key);
+const techOf = (key) => S.map.techs.find((t) => t.key === key);
+
+// Switch the client to another map (the table's choice). The land symbol for ticket mini-maps lives in a
+// hidden SVG so it exists on every page.
+function useMap(key) {
+  const m = S.maps[key];
+  if (!m || S.mapKey === key) return;
+  S.mapKey = key;
+  S.map = m.map;
+  S.land = m.land;
+  S.cityPos = Object.fromEntries(m.map.cities.map((c) => [c.name, c]));
+  S.board = null;
+  setMapSize(m.map.width, m.map.height);
+  document.getElementById("land-holder")?.remove();
+  document.body.append(
+    s("svg", { class: "defs-holder", id: "land-holder", width: 0, height: 0 }, s("defs", {}, s("clipPath", { id: "flag-clip", clipPathUnits: "objectBoundingBox" }, s("circle", { cx: 0.5, cy: 0.5, r: 0.5 })), s("symbol", { id: "land-sym", viewBox: `0 0 ${m.map.width} ${m.map.height}` }, s("path", { d: m.land.land })))),
+  );
+}
 
 // ------------------------------------------------------------------ routing
 function go(path) {
@@ -110,7 +129,8 @@ function showHome() {
   closeSocket();
   S.code = null;
   S.state = null;
-  document.title = "Ticket to Ride · Europe";
+  document.title = "Ticket to Ride";
+  useMap(S.config.default_map);
   const nameInput = h("input", { class: "text", value: S.name, placeholder: suggestName(), maxlength: 20 });
   const codeInput = h("input", { class: "text", placeholder: "CODE", maxlength: 8, autocapitalize: "characters" });
   const create = async () => {
@@ -151,7 +171,7 @@ function showHome() {
         h(
           "p",
           { class: "tagline" },
-          "Build railways across 1900s Europe — tunnels through the Alps, ferries over the Black Sea. Invite friends with a link and fill empty seats with bots.",
+          "Build railways across Europe — or Victorian Britain and Ireland. Invite friends with a link and fill empty seats with bots.",
         ),
         h(
           "div",
@@ -286,6 +306,7 @@ function captureRects() {
 function applyState(next) {
   const prev = S.state;
   const rects = captureRects();
+  useMap(next.settings.map);
   S.state = next;
   S.ui.pending = false;
   if (!prev) renderFeed();
@@ -552,10 +573,11 @@ function renderTop() {
   if (st?.status === "lobby") info = "Lobby";
   else if (g) info = `Turn ${Math.floor(g.turn / Math.max(1, st.seats.length)) + 1} · ${plural(g.tickets_left, "ticket")} left in the pile`;
   const before = [
-    h("span", { class: "brand", title: "Home", onclick: leaveTable }, "🚂 Ticket to Ride", h("small", {}, " Europe")),
+    h("span", { class: "brand", title: "Home", onclick: leaveTable }, "🚂 Ticket to Ride", h("small", {}, ` ${S.map?.name ?? ""}`)),
     h("span", { class: "chip code", title: "Copy table code", onclick: copyCode }, "📋 ", S.code),
     h("span", { class: "round-info" }, info),
     h("span", { class: "spacer" }),
+    st?.status === "lobby" ? h("button", { class: "btn primary small invite-btn", title: `Copy the invite link (${inviteUrl()})`, onclick: copyInvite }, "🔗 Copy invite link") : null,
     g ? iconBtn("📊", "Scores", showScores) : null,
     iconBtn("❓", "How to play", showRules),
   ].filter(Boolean);
@@ -666,6 +688,55 @@ function askName(title, dismissable = false) {
   });
 }
 
+function rulesUK() {
+  const pts = [[1, 1], [2, 2], [3, 4], [4, 7], [5, 10], [6, 15], [10, 40]];
+  return h(
+    "div",
+    { class: "rules-text" },
+    h("p", {}, h("b", {}, "Goal: "), "score the most points by claiming routes and connecting the cities on your destination tickets. This map has no longest-route bonus and no stations."),
+    h("h4", {}, "Setup"),
+    h("ul", {}, h("li", {}, "Everyone starts with 35 trains, 4 train cards and 1 locomotive."), h("li", {}, "You get 5 destination tickets and keep at least 3. Later you draw 3 and keep at least 1.")),
+    h("h4", {}, "On your turn"),
+    h(
+      "ul",
+      {},
+      h("li", {}, h("b", {}, "First, optionally, buy one technology"), " with locomotives (🔧 Technologies), then do one of the following:"),
+      h("li", {}, h("b", {}, "Draw 2 train cards"), " — face-up or blind. A face-up ", chip("loco"), " locomotive counts as both cards. Locomotives are never swept away on this map."),
+      h("li", {}, h("b", {}, "Claim a route"), " — play cards of its colour (gray: any one colour); you need the technologies the route calls for."),
+      h("li", {}, h("b", {}, "Draw 3 destination tickets"), " and keep at least 1."),
+    ),
+    h("h4", {}, "Technologies"),
+    h("p", {}, "At the start you may only claim 1- and 2-space routes, only in England, and no ferries. Hover a route to see what it needs:"),
+    h(
+      "ul",
+      {},
+      S.map.techs.map((t) => h("li", {}, `${t.icon} `, h("b", {}, t.name), ` (${plural(t.cost, "locomotive")}) — ${t.text}`)),
+      h("li", {}, "Any 4 cards of any colours count as one locomotive (3 with the Booster) — also for buying technologies."),
+      h("li", {}, "The ", h("b", {}, "Southampton – New York"), " liner (10 spaces, 40 points) needs no technology at all."),
+    ),
+    h("h4", {}, "Ferries"),
+    h("ul", {}, h("li", {}, "Spaces with a locomotive symbol need a locomotive each; the other spaces take cards of one colour. Needs the Propellers.")),
+    h("ul", {}, h("li", {}, h("b", {}, "Double routes"), ": one player can't take both tracks; with 2 players only one track can be used.")),
+    h("h4", {}, "Scoring"),
+    h("div", { class: "score-legend" }, pts.map(([l, p]) => h("span", {}, h("b", {}, l), " 🚃 → ", h("b", {}, p), " pts"))),
+    h(
+      "ul",
+      {},
+      h("li", {}, "Completed tickets add their value, unfinished ones subtract it."),
+      h("li", {}, "Boiler Lagging and Steam Turbines add points to each route and ferry you claim afterwards; Double Heading adds 2 points per completed ticket at the end."),
+      h("li", {}, "When a player ends a turn with 2 or fewer trains, everyone — including them — plays one last turn."),
+    ),
+    h("h4", {}, "Controls"),
+    h(
+      "ul",
+      {},
+      h("li", {}, "Click face-up cards or the deck to draw; click a route to claim it. Hover your cards to see where you can build with them."),
+      h("li", {}, "Scroll or pinch to zoom the map, drag to pan. Keys: ", h("b", {}, "D"), " deck, ", h("b", {}, "1–5"), " face-up cards, ", h("b", {}, "T"), " tickets, ", h("b", {}, "H"), " hint, ", h("b", {}, "0"), " reset zoom."),
+    ),
+    h("p", {}, h("small", {}, "Not included: the Right of Way card and the advanced technologies of the printed expansion.")),
+  );
+}
+
 function showRules() {
   let close = null;
   const pts = [
@@ -680,8 +751,10 @@ function showRules() {
     h(
       "div",
       { class: "modal wide rules" },
-      h("h2", {}, "How to play Ticket to Ride: Europe"),
-      h(
+      h("h2", {}, `How to play Ticket to Ride: ${S.map.name}`),
+      S.map.technologies
+        ? rulesUK()
+        : h(
         "div",
         { class: "rules-text" },
         h("p", {}, h("b", {}, "Goal: "), "score the most points by claiming railway routes, connecting the cities on your destination tickets and building the longest continuous railway."),
@@ -747,7 +820,17 @@ function liveTable(st) {
   return h(
     "table",
     { class: "scores" },
-    h("thead", {}, h("tr", {}, ["Player", "Route points", "Trains", "Routes", "Longest", "Stations", "Cards", "Tickets"].map((t) => h("th", {}, t)))),
+    h(
+      "thead",
+      {},
+      h(
+        "tr",
+        {},
+        ["Player", "Route points", "Trains", "Routes", g.rules.express ? "Longest" : null, g.rules.stations ? "Stations" : null, g.rules.technologies ? "Techs" : null, "Cards", "Tickets"]
+          .filter(Boolean)
+          .map((t) => h("th", {}, t)),
+      ),
+    ),
     h(
       "tbody",
       {},
@@ -759,8 +842,9 @@ function liveTable(st) {
           h("td", {}, p.points),
           h("td", {}, p.trains),
           h("td", {}, p.routes),
-          h("td", {}, p.longest),
-          h("td", {}, 3 - p.stations.length),
+          g.rules.express ? h("td", {}, p.longest) : null,
+          g.rules.stations ? h("td", {}, g.rules.stations - p.stations.length) : null,
+          g.rules.technologies ? h("td", {}, p.techs.length) : null,
           h("td", {}, p.hand),
           h("td", {}, p.tickets),
         ),
@@ -775,9 +859,10 @@ function resultTable(st) {
   const rows = [
     ["Routes", (r) => r.route_points],
     ["Tickets", (r) => (r.ticket_points >= 0 ? `+${r.ticket_points}` : r.ticket_points)],
-    ["Stations", (r) => (r.station_points ? `+${r.station_points}` : "0")],
-    ["European Express", (r) => (r.express ? `+${r.express_points} (${r.longest})` : `— (${r.longest})`)],
-  ];
+    g.rules.stations ? ["Stations", (r) => (r.station_points ? `+${r.station_points}` : "0")] : null,
+    g.rules.technologies ? ["Double Heading", (r) => (r.tech_points ? `+${r.tech_points}` : "0")] : null,
+    g.rules.express ? ["European Express", (r) => (r.express ? `+${r.express_points} (${r.longest})` : `— (${r.longest})`)] : null,
+  ].filter(Boolean);
   return h(
     "div",
     { class: "scores-wrap" },
@@ -840,31 +925,33 @@ function avatar(st, seat, s, online) {
 
 const botInfo = (key) => S.bots.find((b) => b.key === key);
 
+// A small picture of a map for the lobby: coast, country tints and cities.
+function mapThumb(key) {
+  const { map, land } = S.maps[key];
+  return s(
+    "svg",
+    { class: "map-thumb", viewBox: `0 0 ${map.width} ${map.height}`, preserveAspectRatio: "xMidYMid slice" },
+    s("rect", { width: map.width, height: map.height, class: "mt-sea" }),
+    s("path", { d: land.land, class: "mt-land", "fill-rule": "evenodd" }),
+    ...(land.regions || []).map((r) => s("path", { d: r.d, fill: r.fill, "fill-rule": "evenodd" })),
+    s("path", { d: land.land, class: "mt-coast", "fill-rule": "evenodd" }),
+    ...map.routes.map((r) => {
+      const a = map.cities.find((c) => c.name === r.a);
+      const b = map.cities.find((c) => c.name === r.b);
+      const ends = r.ends || [[a.x, a.y], [b.x, b.y]];
+      const pts = [ends[0], ...(r.path || []), ends[1]];
+      return s("path", { d: `M${pts.map((p) => p.join(",")).join("L")}`, class: "mt-route" });
+    }),
+    ...map.cities.flatMap((c) => [[c.x, c.y], ...(c.sites || [])].map(([x, y]) => s("circle", { cx: x, cy: y, r: map.width * 0.0075, class: "mt-city" }))),
+  );
+}
+
 function renderLobby(st, main) {
   S.board = null;
   const isHost = st.host === S.me;
   const mySeat = st.you.seat;
   const n = st.seats.length;
   const hostName = st.seats.find((s) => s.member === st.host)?.name || st.spectators.find((s) => s.member === st.host)?.name || "the host";
-  const local = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
-  let note = null;
-  if (!S.config.public_url) {
-    if (local && !S.config.lan_url) note = "This link only works on this computer. Restart with `uv run ttr serve --tunnel` to invite people over the internet.";
-    else if (!location.hostname.endsWith("trycloudflare.com")) note = "Works for people on the same network. For friends elsewhere, run `uv run ttr serve --tunnel`.";
-  }
-  const linkInput = h("input", { class: "text", readonly: true, value: inviteUrl(), onclick: (e) => e.target.select() });
-  const invite = h(
-    "div",
-    { class: "invite" },
-    h("div", {}, h("h2", {}, "Invite friends"), h("p", {}, "Anyone who opens the link joins this table. Fill the remaining seats with bots (2–5 players)."), note ? h("p", { class: "note" }, "ℹ️ ", note) : null),
-    h(
-      "div",
-      { class: "link-box" },
-      linkInput,
-      h("button", { class: "btn primary", onclick: copyInvite }, "Copy link"),
-      navigator.share ? h("button", { class: "btn", onclick: () => navigator.share({ title: "Play Ticket to Ride with me", url: inviteUrl() }).catch(() => {}) }, "Share") : null,
-    ),
-  );
   const seatRows = st.seats.map((s, i) => {
     const bot = s.bot ? botInfo(s.bot) : null;
     const isMe = i === mySeat;
@@ -882,15 +969,16 @@ function renderLobby(st, main) {
       isHost && !isMe ? h("button", { class: "icon-btn", title: "Remove", onclick: () => send({ type: "remove_seat", seat: i }) }, "✕") : null,
     );
   });
-  if (n < MAX_SEATS) seatRows.push(h("div", { class: "seat-empty" }, `${MAX_SEATS - n} empty seat${MAX_SEATS - n === 1 ? "" : "s"} — invite someone or add a bot`));
+  const maxSeats = st.max_seats;
+  if (n < maxSeats) seatRows.push(h("div", { class: "seat-empty" }, `${maxSeats - n} empty seat${maxSeats - n === 1 ? "" : "s"} — invite someone or add a bot`));
   const spectators = st.spectators.filter((s) => s.connected);
   const seatsPanel = h(
     "div",
     { class: "panel" },
-    h("h3", {}, "Players", h("small", {}, `${n} / ${MAX_SEATS}`)),
+    h("h3", {}, "Players", h("small", {}, `${n} / ${maxSeats}`)),
     h("div", { class: "seat-list" }, seatRows),
     spectators.length ? h("p", { class: "waiting" }, "Watching: ", spectators.map((s) => s.name).join(", ")) : null,
-    mySeat == null && n < MAX_SEATS ? h("div", { style: { marginTop: "10px" } }, h("button", { class: "btn primary", onclick: () => send({ type: "sit" }) }, "Take a seat")) : null,
+    mySeat == null && n < maxSeats ? h("div", { style: { marginTop: "10px" } }, h("button", { class: "btn primary", onclick: () => send({ type: "sit" }) }, "Take a seat")) : null,
   );
   const botsPanel = h(
     "div",
@@ -902,7 +990,7 @@ function renderLobby(st, main) {
       S.bots.map((b) =>
         h(
           "button",
-          { class: "bot-btn", disabled: !isHost || n >= MAX_SEATS, title: b.description, onclick: () => send({ type: "add_bot", bot: b.key }) },
+          { class: "bot-btn", disabled: !isHost || n >= maxSeats, title: b.description, onclick: () => send({ type: "add_bot", bot: b.key }) },
           h("span", { class: "bname" }, b.label),
           h("span", { class: "stars" }, "★".repeat(b.stars), h("span", { style: { opacity: 0.3 } }, "★".repeat(5 - b.stars))),
           h("span", { class: "bdesc" }, b.description),
@@ -949,7 +1037,30 @@ function renderLobby(st, main) {
         h("button", { class: "btn primary big", disabled: n < 2, onclick: () => send({ type: "start" }) }, n < 2 ? "Need 2+ players" : `🚂 Start game · ${n} players`),
       )
     : h("div", { class: "lobby-actions" }, h("span", { class: "waiting" }, `Waiting for ${hostName} to start the game…`));
-  main.replaceChildren(h("section", { class: "lobby" }, invite, h("div", { class: "lobby-grid" }, seatsPanel, botsPanel, settingsPanel), actions));
+  const mapPanel = h(
+    "div",
+    { class: "panel map-panel" },
+    h("h3", {}, "Map", isHost ? null : h("small", {}, "chosen by the host")),
+    h(
+      "div",
+      { class: "map-grid" },
+      S.config.maps.map((m) =>
+        h(
+          "button",
+          {
+            class: `map-card ${set.map === m.key ? "active" : ""}`,
+            disabled: !isHost,
+            "aria-pressed": set.map === m.key,
+            onclick: () => change("map", m.key),
+          },
+          mapThumb(m.key),
+          h("span", { class: "mname" }, m.label),
+          h("span", { class: "mdesc" }, m.blurb),
+        ),
+      ),
+    ),
+  );
+  main.replaceChildren(h("section", { class: "lobby" }, mapPanel, h("div", { class: "lobby-grid" }, seatsPanel, botsPanel, settingsPanel), actions));
 }
 
 // ------------------------------------------------------------------ game view
@@ -1005,7 +1116,6 @@ function renderBoardHighlights(st) {
   const ui = S.ui;
   if (me?.my_turn && g.phase === "turn") {
     if (ui.handColor) for (const rid of myColorRoutes(st, ui.handColor)) routes[rid] = "claimable";
-    else if (ui.showClaimable) for (const rid of Object.keys(me.claimable)) routes[rid] = "claimable";
   }
   if (g.tunnel) routes[g.tunnel.route] = "focus";
   const hint = ui.hint;
@@ -1075,12 +1185,22 @@ function renderPlayers(st) {
           h("span", { title: "Trains left", class: p.trains <= 6 ? "warn" : "" }, "🚃 ", p.trains),
           h("span", { title: "Train cards in hand" }, "🂠 ", p.hand),
           h("span", { title: "Destination tickets" }, "🎫 ", p.tickets),
-          h("span", { title: "Stations left" }, "🏠 ", 3 - p.stations.length),
-          h("span", { title: "Longest continuous path", class: p.longest && p.longest === lead ? "lead" : "" }, "⟿ ", p.longest),
+          g.rules.stations ? h("span", { title: "Stations left" }, "🏠 ", g.rules.stations - p.stations.length) : null,
+          g.rules.express ? h("span", { title: "Longest continuous path", class: p.longest && p.longest === lead ? "lead" : "" }, "⟿ ", p.longest) : null,
         ),
+        g.rules.technologies ? techStrip(p.techs) : null,
         takeOver,
       );
     }),
+  );
+}
+
+// Small icons for the technologies a player owns.
+function techStrip(keys, empty = "no technology yet") {
+  return h(
+    "div",
+    { class: "tech-strip" },
+    keys.length ? keys.map((k) => h("span", { class: "tech-ico", title: `${techOf(k).name} — ${techOf(k).text}` }, techOf(k).icon)) : h("span", { class: "tech-none" }, empty),
   );
 }
 
@@ -1152,7 +1272,8 @@ function renderDock(st) {
     { class: `hand ${cards.length > 4 ? "two-rows" : ""}`, style: { "--cols": Math.ceil(cards.length / 2) } },
     cards.length ? cards : h("span", { class: "empty-note" }, "No train cards yet"),
   );
-  const tickets = me.tickets.map((t) =>
+  const sorted = [...me.tickets].sort((a, b) => Number(a.done) - Number(b.done));
+  const tickets = sorted.map((t) =>
     ticketCard(ticket(t.id), S.cityPos, {
       done: t.done,
       cls: S.ui.pinned.has(t.id) ? "pinned" : "",
@@ -1207,24 +1328,29 @@ function renderDock(st) {
     st.settings.hints && st.status === "playing" && (myTurn || me.offer.length)
       ? h("button", { class: "btn small", title: "Ask the Expert bot (H)", onclick: () => send({ type: "hint" }) }, "💡 Hint")
       : null,
-    h(
-      "label",
-      { class: "check", title: "Glow routes you can claim right now" },
-      h("input", {
-        type: "checkbox",
-        checked: S.ui.showClaimable,
-        onchange: (e) => {
-          S.ui.showClaimable = e.target.checked;
-          localStorage.setItem("ttr.showClaimable", e.target.checked ? "1" : "0");
-          renderBoardHighlights(st);
-        },
-      }),
-      " show claimable",
-    ),
     myTurn && me.can_pass ? h("button", { class: "btn small", onclick: () => act({ type: "pass" }) }, "Pass") : null,
   );
+  const techSec = g.rules.technologies
+    ? h(
+        "div",
+        { class: "dock-sec tech-sec" },
+        h("div", { class: "dock-title" }, "Technology"),
+        techStrip(me.techs, "none yet"),
+        h(
+          "button",
+          {
+            class: `btn small ${myTurn && Object.keys(me.tech_options).length ? "primary" : ""}`,
+            title: "Buy a technology with locomotives (once per turn, before your action)",
+            onclick: showTech,
+          },
+          "🔧 Technologies",
+        ),
+      )
+    : null;
+  const scroll = { dock: box.scrollLeft, tickets: box.querySelector(".my-tickets")?.scrollLeft ?? 0, ticketsY: box.querySelector(".my-tickets")?.scrollTop ?? 0 };
   box.replaceChildren(
-    h("div", { class: "dock-sec hand-sec" }, h("div", { class: "dock-title" }, `Your train cards · ${total}`), hand),
+    ...[h("div", { class: "dock-sec hand-sec" }, h("div", { class: "dock-title" }, `Your train cards · ${total}`), hand),
+    techSec,
     h(
       "div",
       { class: "dock-sec tickets-sec" },
@@ -1240,6 +1366,136 @@ function renderDock(st) {
       h("div", { class: "my-tickets" }, pending, tickets.length || pending.length ? tickets : h("span", { class: "empty-note" }, "No tickets yet")),
     ),
     tools,
+  ].filter(Boolean));
+  // The dock is rebuilt on every update; keep the player's scroll position instead of jumping back to the start.
+  box.scrollLeft = scroll.dock;
+  const list = box.querySelector(".my-tickets");
+  if (list) {
+    list.scrollLeft = scroll.tickets;
+    list.scrollTop = scroll.ticketsY;
+  }
+}
+
+// UK map: when a payment needs cards to stand in for locomotives, let the player pick which ones.
+// `used` = cards already fixed by the payment (e.g. the colour), `wilds` = locomotive spaces to cover.
+function actWithSwap(me, used, wilds, build) {
+  const rate = me.swap_rate || 0;
+  const groups = wilds - Math.min(wilds, me.hand.loco || 0);
+  if (!rate || groups <= 0) return act(build({}));
+  const need = groups * rate;
+  const avail = {};
+  for (const c of CARD_ORDER) {
+    if (c === "loco") continue;
+    const n = (me.hand[c] || 0) - (used[c] || 0);
+    if (n > 0) avail[c] = n;
+  }
+  const total = Object.values(avail).reduce((a, b) => a + b, 0);
+  if (total <= need) return act(build({ ...avail }));
+  // Start from the usual automatic choice: the smallest piles.
+  const pick = {};
+  let left = need;
+  for (const c of Object.keys(avail).sort((a, b) => avail[a] - avail[b])) {
+    const take = Math.min(avail[c], left);
+    if (take) pick[c] = take;
+    left -= take;
+  }
+  let close = null;
+  const sum = () => Object.values(pick).reduce((a, b) => a + b, 0);
+  const rows = h("div", { class: "swap-grid" });
+  const okBtn = h("button", { class: "btn primary", onclick: () => { close(); act(build({ ...pick })); } }, "Pay");
+  const counter = h("b", {});
+  const refresh = () => {
+    counter.textContent = `${sum()} / ${need}`;
+    okBtn.disabled = sum() !== need;
+    rows.replaceChildren(
+      ...Object.keys(avail).map((c) =>
+        h(
+          "div",
+          { class: `swap-card ${pick[c] ? "on" : ""}` },
+          trainCard(c, { count: avail[c] }),
+          h(
+            "div",
+            { class: "swap-step" },
+            h("button", { class: "btn small", disabled: !pick[c], onclick: () => { pick[c] -= 1; refresh(); } }, "−"),
+            h("span", {}, pick[c] || 0),
+            h("button", { class: "btn small", disabled: (pick[c] || 0) >= avail[c] || sum() >= need, onclick: () => { pick[c] = (pick[c] || 0) + 1; refresh(); } }, "+"),
+          ),
+        ),
+      ),
+    );
+  };
+  refresh();
+  close = openDialog(
+    h(
+      "div",
+      { class: "modal swap-modal" },
+      h("h2", {}, "Choose the cards to give up"),
+      h("p", { class: "sub" }, `Any ${rate} cards count as one locomotive. Pick the `, counter, ` cards that stand in for ${plural(groups, "locomotive")}.`),
+      rows,
+      h("div", { class: "actions" }, h("button", { class: "btn", onclick: () => close() }, "Cancel"), okBtn),
+    ),
+  );
+}
+
+// What a card payment spends: real locomotives first, then groups of `rate` cards.
+function swapNote(cost, me) {
+  const rate = me?.swap_rate || 0;
+  if (!rate) return null;
+  const real = me.hand.loco || 0;
+  return cost > real ? ` (any ${rate} cards count as a locomotive — you choose which)` : null;
+}
+
+function showTech() {
+  const st = S.state;
+  const g = st?.game;
+  const me = g?.me;
+  if (!me) return;
+  let close = null;
+  const myTurn = me.my_turn && !S.ui.pending && g.phase === "turn";
+  const rate = me.swap_rate;
+  const rows = S.map.techs.map((t) => {
+    const owned = me.techs.includes(t.key);
+    const cards = me.tech_options[t.key];
+    let action;
+    if (owned) action = h("span", { class: "tag you" }, "owned");
+    else if (myTurn && g.tech_bought) action = h("span", { class: "tech-why" }, "one per turn");
+    else if (myTurn && cards) {
+      action = h(
+        "button",
+        {
+          class: "btn small primary",
+          onclick: () => {
+            close();
+            actWithSwap(me, {}, t.cost, (swap) => ({ type: "tech", tech: t.key, swap }));
+          },
+        },
+        "Buy · ",
+        Object.entries(cards).map(([c, n]) => chip(c, n)),
+      );
+    } else action = h("span", { class: "tech-why" }, myTurn ? `needs ${plural(t.cost, "locomotive")}${rate ? ` or ${rate} cards each` : ""}` : "");
+    return h(
+      "div",
+      { class: `tech-row ${owned ? "owned" : ""}` },
+      h("span", { class: "tech-icon" }, t.icon),
+      h("div", { class: "tech-info" }, h("b", {}, t.name), h("span", {}, t.text)),
+      h("span", { class: "tech-cost", title: "Cost in locomotives" }, chip("loco", t.cost)),
+      action,
+    );
+  });
+  close = openDialog(
+    h(
+      "div",
+      { class: "modal wide tech-modal" },
+      h("h2", {}, "Technologies"),
+      h(
+        "p",
+        { class: "sub" },
+        "You start with none: only 1- and 2-space routes in England. Buy one technology at the start of your turn, then play your usual action. ",
+        rate ? `Any ${rate} cards of any colour count as one locomotive when you pay.` : "",
+      ),
+      h("div", { class: "tech-list" }, rows),
+      h("div", { class: "actions" }, h("button", { class: "btn primary", onclick: () => close() }, "Close")),
+    ),
   );
 }
 
@@ -1260,6 +1516,7 @@ function statusText(st) {
   if (me?.my_turn) {
     switch (g.phase) {
       case "turn":
+        if (g.rules.technologies) return { mine: true, final, parts: [g.tech_bought ? "Technology bought — now draw cards, claim a route or draw tickets" : "Your turn — optionally buy a technology, then draw 2 cards, claim a route or draw tickets"] };
         return { mine: true, final, parts: ["Your turn — draw 2 cards, claim a route, draw tickets or build a station"] };
       case "second_card":
         return { mine: true, final, parts: ["Draw your second card (not a face-up locomotive)"] };
@@ -1446,6 +1703,7 @@ function routeMeta(r) {
   const bits = [`${r.length} ${r.length === 1 ? "space" : "spaces"}`, r.color ? COLOR_NAMES[r.color] : "Gray (any one colour)", `${r.points} points`];
   if (r.tunnel) bits.push("⛰ tunnel");
   if (r.ferry) bits.push(`⛴ ferry · ${plural(r.ferry, "locomotive")} required`);
+  if (r.needs?.length) bits.push(`🔧 needs ${r.needs.map((k) => techOf(k).name).join(", ")}`);
   return bits.join(" · ");
 }
 
@@ -1460,6 +1718,8 @@ function routeBlocker(st, r) {
   }
   const me = g.me;
   if (!me) return null;
+  const missing = (r.needs || []).filter((k) => !me.techs.includes(k));
+  if (missing.length) return `You first need: ${missing.map((k) => techOf(k).name).join(", ")} — buy ${missing.length > 1 ? "them" : "it"} with locomotives at the start of a turn`;
   if (!me.my_turn) return "Wait for your turn";
   if (g.phase !== "turn") return "Finish your current action first";
   if (g.players[st.you.seat].trains < r.length) return "Not enough trains left";
@@ -1481,7 +1741,7 @@ function onRouteClick(rid, e) {
     return;
   }
   const buttons = options.map(([color, locos]) =>
-    h("button", { class: "btn pay", onclick: () => act({ type: "claim", route: rid, color, locos }) }, paymentChips(r.length, color, locos)),
+    h("button", { class: "btn pay", title: swapNote(locos, me) || "", onclick: () => actWithSwap(me, color && r.length > locos ? { [color]: r.length - locos } : {}, locos, (swap) => ({ type: "claim", route: rid, color, locos, swap })) }, paymentChips(r.length, color, locos)),
   );
   openPopover(
     e.clientX,
@@ -1494,6 +1754,7 @@ function onRouteClick(rid, e) {
       r.tunnel ? h("p", { class: "why" }, "Tunnel: 3 cards will be turned and may cost extra cards.") : null,
       h("p", { class: "label" }, "Pay with:"),
       h("div", { class: "pay-list" }, buttons),
+      me.swap_rate && options.some(([, l]) => l > (me.hand.loco || 0)) ? h("p", { class: "why" }, `Not enough locomotives? Any ${me.swap_rate} cards count as one — you choose which ones to give up.`) : null,
     ),
   );
 }
@@ -1508,7 +1769,7 @@ function onCityClick(name, e) {
   const parts = [h("h4", {}, name)];
   if (myTickets.length) parts.push(h("p", { class: "meta" }, "Your tickets: ", myTickets.map((t) => `${ticket(t.id).a}–${ticket(t.id).b}`).join(", ")));
   if (owner != null) parts.push(h("p", { class: "why" }, `🏠 ${st.seats[owner].name} has a station here.`));
-  else if (me?.my_turn && g.phase === "turn" && !S.ui.pending) {
+  else if (g.rules.stations && me?.my_turn && g.phase === "turn" && !S.ui.pending) {
     const opts = me.station_options;
     if (opts.length) {
       parts.push(h("p", { class: "label" }, `Build a station (${plural(me.station_cost, "card")} of one colour):`));
@@ -1520,7 +1781,7 @@ function onCityClick(name, e) {
         ),
       );
       parts.push(h("p", { class: "why" }, "A station lets you use one opponent route into this city for your tickets. You don't pick it now: at the end of the game the route that scores you the most is used. Unused stations score 4 points each."));
-    } else if (g.players[st.you.seat].stations.length >= 3) parts.push(h("p", { class: "why" }, "You have no stations left."));
+    } else if (g.players[st.you.seat].stations.length >= g.rules.stations) parts.push(h("p", { class: "why" }, "You have no stations left."));
     else parts.push(h("p", { class: "why" }, `A station here costs ${plural(me.station_cost, "card")} of one colour.`));
   }
   openPopover(e.clientX, e.clientY, h("div", {}, parts));
@@ -1569,6 +1830,9 @@ function showHint(action) {
       break;
     case "station":
       text = `Build a station in ${action.city}`;
+      break;
+    case "tech":
+      text = `Buy ${techOf(action.tech).name}`;
       break;
     case "tunnel_pay":
       text = "Pay for the tunnel";
@@ -1705,17 +1969,18 @@ for (const ev of ["pointerdown", "keydown"]) window.addEventListener(ev, unlockA
 
 // ------------------------------------------------------------------ boot
 async function boot() {
-  const [config, map, land] = await Promise.all([
-    fetch("/api/config").then((r) => r.json()),
-    fetch("/api/map").then((r) => r.json()),
-    fetch("/static/land.json").then((r) => r.json()),
-  ]);
+  const config = await fetch("/api/config").then((r) => r.json());
   S.config = config;
-  S.map = map;
-  S.land = land;
-  S.cityPos = Object.fromEntries(map.cities.map((c) => [c.name, c]));
-  // The land symbol for ticket mini-maps lives in a hidden SVG so it exists on every page.
-  document.body.append(s("svg", { class: "defs-holder", width: 0, height: 0 }, s("defs", {}, s("symbol", { id: "land-sym", viewBox: `0 0 ${map.width} ${map.height}` }, s("path", { d: land.land })))));
+  await Promise.all(
+    config.maps.map(async ({ key }) => {
+      const [map, land] = await Promise.all([
+        fetch(`/api/map/${key}`).then((r) => r.json()),
+        fetch(key === "europe" ? "/static/land.json" : `/static/land-${key}.json`).then((r) => r.json()),
+      ]);
+      S.maps[key] = { map, land };
+    }),
+  );
+  useMap(config.default_map);
   router();
 }
 boot().catch((e) => {

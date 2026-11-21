@@ -13,10 +13,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from ttr.game import rules
+from ttr.game import rules, techs
 from ttr.game.actions import (
     Action,
     BuildStation,
+    BuyTech,
     Claim,
     DrawCard,
     DrawTickets,
@@ -52,14 +53,39 @@ class RulesConfig:
     hand_size: int = 4
     face_up: int = 5
     max_face_up_locos: int = 2  # a third face-up locomotive wipes the market
-    initial_offer: int = 3  # short tickets, plus one long ticket
+    initial_long: int = 1  # long tickets in the first offer, on top of `initial_offer` short ones
+    initial_offer: int = 3  # short tickets
     initial_keep: int = 2
     ticket_draw: int = 3
     tunnel_reveal: int = 3
     end_trains: int = 2  # a turn ending with this many trains or fewer starts the last round
     express_bonus: int = 10
     double_min_players: int = 4  # with fewer players only one track of a double route is used
+    max_players: int = 5
+    locos_in_deck: int = LOCOS_IN_DECK
+    start_locos: int = 0  # locomotives dealt on top of the starting hand
+    technologies: bool = False  # UK map: technology cards gate which routes may be claimed
+    swap_rate: int = 0  # UK map: this many cards of any colours count as one locomotive (0 = never)
     max_turns: int = 1000  # stalemate guard
+
+
+def uk_rules() -> RulesConfig:
+    """The United Kingdom map: 35 trains, no stations, no Express, technologies."""
+    return RulesConfig(
+        trains=35,
+        stations=0,
+        max_face_up_locos=5,
+        initial_long=0,
+        initial_offer=5,
+        initial_keep=3,
+        express_bonus=0,
+        double_min_players=3,
+        max_players=4,
+        locos_in_deck=20,
+        start_locos=1,
+        technologies=True,
+        swap_rate=4,
+    )
 
 
 @dataclass
@@ -73,6 +99,7 @@ class Player:
     routes: list[int] = field(default_factory=list)
     points: int = 0  # route points scored during play
     turns: int = 0
+    techs: set[str] = field(default_factory=set)
 
     @property
     def hand_size(self) -> int:
@@ -94,6 +121,7 @@ class PlayerResult:
     tickets: list[tuple[int, bool]]  # (ticket id, completed)
     ticket_points: int
     station_points: int
+    tech_points: int
     longest: int
     express: bool
     express_points: int
@@ -127,6 +155,9 @@ class View:
     station_at: dict[str, int]
     trains: tuple[int, ...]
     stations_left: tuple[int, ...]
+    techs: tuple[frozenset[str], ...]
+    tech_bought: bool
+    tech_options: dict[str, dict[str, int]]
     hand_counts: tuple[int, ...]
     ticket_counts: tuple[int, ...]
     points: tuple[int, ...]
@@ -142,8 +173,9 @@ class View:
         return self.trains[self.seat]
 
 
-def build_deck() -> list[str]:
-    return [c for c in COLORS for _ in range(CARDS_PER_COLOR)] + [LOCO] * LOCOS_IN_DECK
+def build_deck(config: RulesConfig | None = None) -> list[str]:
+    locos = (config or RulesConfig()).locos_in_deck
+    return [c for c in COLORS for _ in range(CARDS_PER_COLOR)] + [LOCO] * locos
 
 
 class Game:
@@ -155,13 +187,13 @@ class Game:
         board: MapData = EUROPE,
         first: int | None = None,
     ) -> None:
-        if not 2 <= n_players <= 5:
-            raise ValueError("Ticket to Ride: Europe is for 2-5 players")
-        self.rules = rules_config or RulesConfig()
+        self.rules = rules_config or (uk_rules() if board.technologies else RulesConfig())
+        if not 2 <= n_players <= self.rules.max_players:
+            raise ValueError(f"{board.name} is for 2-{self.rules.max_players} players")
         self.board = board
         self.n = n_players
         self.rng = random.Random(seed)
-        self.deck = build_deck()
+        self.deck = build_deck(self.rules)
         self.rng.shuffle(self.deck)
         self.discard: list[str] = []
         self.face_up: list[str | None] = [None] * self.rules.face_up
@@ -178,14 +210,18 @@ class Game:
         self.final_turns: int | None = None
         self.last_round_by: int | None = None
         self.tunnel: TunnelState | None = None
+        self.tech_bought = False  # one technology per turn
         self.result: GameResult | None = None
         self.phase = Phase.INITIAL_TICKETS
         for p in self.players:
+            for _ in range(self.rules.start_locos):
+                self.deck.remove(LOCO)
+                p.hand[LOCO] += 1
             for _ in range(self.rules.hand_size):
                 card = self._draw_card()
                 assert card is not None
                 p.hand[card] += 1
-            p.offer = [long.pop()] if long else []
+            p.offer = [long.pop() for _ in range(min(self.rules.initial_long, len(long)))]
             p.offer += [self.ticket_deck.pop() for _ in range(self.rules.initial_offer)]
             p.offer_min = self.rules.initial_keep
         self._refill_market()
@@ -207,16 +243,39 @@ class Game:
         card = self.face_up[slot] if 0 <= slot < len(self.face_up) else None
         return card is not None and not (self.phase == Phase.SECOND_CARD and card == LOCO)
 
+    def swap_rate(self, seat: int) -> int:
+        """Cards of any colours that count as one locomotive for `seat` (0 = swapping is off)."""
+        if not self.rules.swap_rate:
+            return 0
+        return techs.BOOSTER_RATE if "booster" in self.players[seat].techs else self.rules.swap_rate
+
+    def tech_options(self, seat: int) -> dict[str, dict[str, int]]:
+        """Technologies `seat` could buy right now, with the cards each would spend."""
+        p = self.players[seat]
+        if not self.rules.technologies or self.tech_bought:
+            return {}
+        out: dict[str, dict[str, int]] = {}
+        for t in techs.TECHS:
+            if t.key in p.techs:
+                continue
+            cards = rules.tech_cards(t.cost, p.hand, self.swap_rate(seat))
+            if cards is not None:
+                out[t.key] = cards
+        return out
+
     def claimable(self, seat: int) -> dict[int, list[rules.Payment]]:
         """Routes `seat` can claim right now with every way to pay for them."""
         p = self.players[seat]
         out: dict[int, list[rules.Payment]] = {}
+        rate = self.swap_rate(seat)
         for r in self.board.routes:
             if r.length > p.trains:
                 continue
+            if not self.board.tech_needs[r.id] <= p.techs:
+                continue
             if not rules.route_open(r, self.owners, seat, self.n, self.rules.double_min_players):
                 continue
-            options = rules.payment_options(r, p.hand)
+            options = rules.payment_options(r, p.hand, rate)
             if options:
                 out[r.id] = options
         return out
@@ -258,6 +317,9 @@ class Game:
             station_at=dict(self.station_at),
             trains=tuple(q.trains for q in self.players),
             stations_left=tuple(self.rules.stations - len(q.stations) for q in self.players),
+            techs=tuple(frozenset(q.techs) for q in self.players),
+            tech_bought=self.tech_bought,
+            tech_options=self.tech_options(seat) if mine and self.phase == Phase.TURN else {},
             hand_counts=tuple(q.hand_size for q in self.players),
             ticket_counts=tuple(len(q.tickets) for q in self.players),
             points=tuple(q.points for q in self.players),
@@ -326,6 +388,8 @@ class Game:
                 return self._draw_tickets(seat)
             case Phase.TURN, BuildStation():
                 return self._build_station(seat, action)
+            case Phase.TURN, BuyTech():
+                return self._buy_tech(seat, action)
             case Phase.TURN, Pass():
                 if self.has_move(seat):
                     raise IllegalMove("You can still make a move")
@@ -375,11 +439,17 @@ class Game:
             raise IllegalMove("That route is not available")
         if r.length > p.trains:
             raise IllegalMove("You don't have enough trains left")
+        missing = self.board.tech_needs[r.id] - p.techs
+        if missing:
+            names = ", ".join(techs.TECH_BY_KEY[k].name for k in sorted(missing))
+            raise IllegalMove(f"You need technology first: {names}")
         payment = (action.color, action.locos)
-        if not rules.valid_payment(r.length, r.color, r.ferry, p.hand, payment):
+        rate = self.swap_rate(seat)
+        swap = dict(action.swap) or None
+        if not rules.valid_payment(r.length, r.color, r.ferry, p.hand, payment, rate, swap):
             raise IllegalMove("You can't pay for that route with those cards")
         color = action.color if action.locos < r.length else None
-        cards = rules.payment_cards(r.length, (color, action.locos))
+        cards = rules.payment_cards(r.length, (color, action.locos), p.hand, rate, swap)
         p.hand.subtract(cards)
         p.hand += Counter()  # drop zero counts
         if not r.tunnel:
@@ -434,8 +504,32 @@ class Game:
         self.owners[r.id] = seat
         p.routes.append(r.id)
         p.trains -= r.length
-        p.points += r.points
-        return [{"kind": "claim", "seat": seat, "route": r.id, "cards": cards, "points": r.points}]
+        points = r.points
+        if "lagging" in p.techs:
+            points += techs.LAGGING_POINTS
+        if r.ferry and "turbines" in p.techs:
+            points += techs.TURBINES_POINTS
+        p.points += points
+        return [{"kind": "claim", "seat": seat, "route": r.id, "cards": cards, "points": points}]
+
+    def _buy_tech(self, seat: int, action: BuyTech) -> list[Event]:
+        p = self.players[seat]
+        tech = techs.TECH_BY_KEY.get(action.tech)
+        if not self.rules.technologies or tech is None:
+            raise IllegalMove("There are no technologies to buy")
+        if self.tech_bought:
+            raise IllegalMove("You can buy only one technology per turn")
+        if tech.key in p.techs:
+            raise IllegalMove("You already have that technology")
+        cards = rules.tech_cards(tech.cost, p.hand, self.swap_rate(seat), dict(action.swap) or None)
+        if cards is None:
+            raise IllegalMove(f"{tech.name} costs {tech.cost} locomotive{'s' if tech.cost > 1 else ''}")
+        p.hand.subtract(cards)
+        p.hand += Counter()
+        self.discard.extend(Counter(cards).elements())
+        p.techs.add(tech.key)
+        self.tech_bought = True
+        return [{"kind": "tech", "seat": seat, "tech": tech.key, "cards": cards}]
 
     def _draw_tickets(self, seat: int) -> list[Event]:
         if not self.ticket_deck:
@@ -500,6 +594,7 @@ class Game:
         p.turns += 1
         self.turn += 1
         self.phase = Phase.TURN
+        self.tech_bought = False
         events: list[Event] = []
         if self.final_turns is not None:
             self.final_turns -= 1
@@ -525,7 +620,8 @@ class Game:
             tickets = list(zip(p.tickets, done, strict=True))
             ticket_points = sum(self.ticket(t).value if d else -self.ticket(t).value for t, d in tickets)
             station_points = (self.rules.stations - len(p.stations)) * self.rules.station_value
-            express = best > 0 and longest[seat] == best
+            tech_points = techs.DOUBLE_HEADING_POINTS * sum(done) if "double_heading" in p.techs else 0
+            express = self.rules.express_bonus > 0 and best > 0 and longest[seat] == best
             express_points = self.rules.express_bonus if express else 0
             results.append(
                 PlayerResult(
@@ -533,11 +629,12 @@ class Game:
                     tickets=tickets,
                     ticket_points=ticket_points,
                     station_points=station_points,
+                    tech_points=tech_points,
                     longest=longest[seat],
                     express=express,
                     express_points=express_points,
                     borrowed=borrowed,
-                    total=p.points + ticket_points + station_points + express_points,
+                    total=p.points + ticket_points + station_points + tech_points + express_points,
                 )
             )
 
